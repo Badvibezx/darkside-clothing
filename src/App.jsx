@@ -356,15 +356,13 @@ export default function App() {
 
   // --- REDESIGNED AUTH WITH REAL FIREBASE OTP & EMAIL FALLBACK ---
   const AuthView = () => {
-    const [authMode, setAuthMode] = useState('phone'); // 'phone', 'email', or 'admin'
+    const [authMode, setAuthMode] = useState('phone'); // 'phone' or 'email'
     const [phone, setPhone] = useState('');
     const [otpSent, setOtpSent] = useState(false);
     const [otp, setOtp] = useState('');
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
     const [isSignup, setIsSignup] = useState(false);
-    const [adminEmail, setAdminEmail] = useState('');
-    const [adminPass, setAdminPass] = useState('');
     const [error, setError] = useState(''); 
     const [loading, setLoading] = useState(false);
     
@@ -394,7 +392,7 @@ export default function App() {
         setOtpSent(true);
       } catch (err) {
         console.error("SMS Error", err);
-        setError("SMS FAILED. Ensure Phone Auth is enabled in Firebase Console.");
+        setError(`SMS FAILED: ${err.message}`); // Output exact error for debugging
         if (window.recaptchaVerifier) {
           window.recaptchaVerifier.clear();
           window.recaptchaVerifier = null;
@@ -423,6 +421,13 @@ export default function App() {
     const handleEmailAuth = async (e) => {
       e.preventDefault();
       setError(''); setLoading(true);
+
+      // -- HIDDEN ADMIN BYPASS --
+      if (email === 'admin@darkside.com' && password === 'darkside') {
+         setTimeout(() => { setLoading(false); handleNavigate('admin'); }, 800);
+         return;
+      }
+
       try { 
         isSignup ? await createUserWithEmailAndPassword(auth, email, password) : await signInWithEmailAndPassword(auth, email, password); 
         handleNavigate('account'); 
@@ -433,25 +438,15 @@ export default function App() {
       } 
     };
 
-    const handleAdminLogin = async (e) => {
-      e.preventDefault(); setError(''); setLoading(true);
-      if (adminEmail === 'admin@darkside.com' && adminPass === 'darkside') {
-         setTimeout(() => { setLoading(false); handleNavigate('admin'); }, 800);
-      } else {
-         setTimeout(() => { setLoading(false); setError("ACCESS DENIED."); }, 800);
-      }
-    };
-
     return (
       <div className="pt-32 px-4 max-w-md mx-auto min-h-screen">
         <div className={`${theme.card} border ${theme.border} p-8 relative overflow-hidden`}>
-          {authMode === 'admin' && <div className="absolute top-0 left-0 w-full h-1 bg-red-500 animate-pulse"></div>}
           
           <h2 className={`text-4xl font-black uppercase tracking-tighter mb-2 ${theme.text}`} style={{ fontFamily: "'Impact', sans-serif" }}>
-            {authMode === 'admin' ? "System Admin" : "Join The Syndicate"}
+            Join The Syndicate
           </h2>
           <p className={`font-mono text-xs mb-8 ${theme.textMuted}`}>
-            {authMode === 'admin' ? "RESTRICTED ACCESS. UNAUTHORIZED ENTRY WILL BE LOGGED." : "AUTHENTICATE VIA SECURE TERMINAL."}
+            AUTHENTICATE VIA SECURE TERMINAL.
           </p>
           
           {error && <p className="text-red-500 font-mono text-xs mb-4 p-2 bg-red-500/10 border border-red-500/30 flex items-center gap-2"><AlertOctagon size={14}/> {error}</p>}
@@ -470,7 +465,7 @@ export default function App() {
                   </div>
                 </div>
                 <button disabled={loading || phone.length !== 10} type="submit" className={`w-full font-black py-4 mt-4 uppercase tracking-widest disabled:opacity-50 flex justify-center items-center gap-2 ${theme.btnPrimary}`}>
-                  {loading ? <Loader2 className="animate-spin" size={18} /> : <Smartphone size={18} />} SEND REAL OTP
+                  {loading ? <Loader2 className="animate-spin" size={18} /> : <Smartphone size={18} />} GET OTP
                 </button>
                 <button type="button" onClick={() => setAuthMode('email')} className={`w-full text-center text-xs mt-4 hover:underline ${theme.textMuted} flex justify-center items-center gap-1`}><Mail size={12}/> Switch to Email Login</button>
               </form>
@@ -505,21 +500,6 @@ export default function App() {
             </form>
           )}
 
-          {authMode === 'admin' && (
-            <form onSubmit={handleAdminLogin} className="space-y-4 font-mono text-sm animate-in fade-in">
-              <div><label className="block mb-1 text-red-500 font-bold">ADMIN EMAIL</label><input type="email" value={adminEmail} onChange={e=>setAdminEmail(e.target.value)} required className={`w-full p-3 outline-none ${theme.input} focus:border-red-500`} /></div>
-              <div><label className="block mb-1 text-red-500 font-bold">OVERRIDE PASSCODE</label><input type="password" value={adminPass} onChange={e=>setAdminPass(e.target.value)} required className={`w-full p-3 outline-none ${theme.input} focus:border-red-500`} /></div>
-              <button disabled={loading} type="submit" className={`w-full font-black py-4 mt-4 uppercase tracking-widest disabled:opacity-50 flex justify-center items-center gap-2 bg-red-500 text-white hover:bg-red-600`}>
-                {loading ? <Loader2 className="animate-spin" size={18} /> : <Lock size={18} />} INITIATE OVERRIDE
-              </button>
-            </form>
-          )}
-
-          <div className="mt-8 border-t border-gray-500/20 pt-4 text-center">
-            <button onClick={() => { setAuthMode(authMode === 'admin' ? 'phone' : 'admin'); setOtpSent(false); }} className={`text-[10px] font-mono uppercase tracking-widest ${theme.textMuted} hover:${theme.text}`}>
-              {authMode !== 'admin' ? "[ ACCESS ADMIN TERMINAL ]" : "[ RETURN TO STANDARD AUTH ]"}
-            </button>
-          </div>
         </div>
       </div>
     );
