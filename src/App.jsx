@@ -79,6 +79,19 @@ export default function App() {
   const [checkoutMsg, setCheckoutMsg] = useState('');
   const [isFlashing, setIsFlashing] = useState(false);
 
+  // --- MOBILE BUG FIXES: SCROLL LOCK ---
+  // Prevents the background website from scrolling when a mobile menu, cart, or modal is open.
+  useEffect(() => {
+    if (isCartOpen || showSizeAI || showVibeMatcher || isMobileMenuOpen) {
+      document.body.style.overflow = 'hidden';
+    } else {
+      document.body.style.overflow = 'unset';
+    }
+    // Cleanup on unmount
+    return () => { document.body.style.overflow = 'unset'; };
+  }, [isCartOpen, showSizeAI, showVibeMatcher, isMobileMenuOpen]);
+  // -------------------------------------
+
   // Dynamic Theme State (Light mode when on Shop/Product views)
   const isLight = view !== 'home' && view !== 'admin';
 
@@ -218,7 +231,8 @@ export default function App() {
   
     return (
       <div 
-        className="fixed top-0 left-0 w-6 h-6 rounded-full pointer-events-none z-[99999] mix-blend-difference transition-transform duration-100 ease-out flex items-center justify-center"
+        // FIX: Added 'hidden md:flex' so the custom cursor does not appear on touch/mobile devices!
+        className="hidden md:flex fixed top-0 left-0 w-6 h-6 rounded-full pointer-events-none z-[99999] mix-blend-difference transition-transform duration-100 ease-out items-center justify-center"
         style={{ 
           transform: `translate(${mousePos.x - 12}px, ${mousePos.y - 12}px) scale(${isHoveringItem ? 2.5 : 1})`,
           backgroundColor: isHoveringItem ? 'transparent' : '#CCFF00',
@@ -278,7 +292,8 @@ export default function App() {
               <Heart className={`w-5 h-5 ${theme.text} hover:text-[#8A2BE2]`} />
               {wishlist.length > 0 && <span className="absolute -top-2 -right-2 w-4 h-4 bg-[#8A2BE2] text-white text-[10px] font-bold flex items-center justify-center rounded-full">{wishlist.length}</span>}
             </div>
-            <div className="relative cursor-pointer" onClick={() => setIsCartOpen(true)}>
+            {/* FIX: Auto-close mobile menu if cart is opened */}
+            <div className="relative cursor-pointer" onClick={() => { setIsCartOpen(true); setIsMobileMenuOpen(false); }}>
               <ShoppingBag className={`w-5 h-5 ${theme.text} hover:text-[#8A2BE2]`} />
               {cart.length > 0 && <span className={`absolute -top-2 -right-2 w-4 h-4 ${isLight ? 'bg-black text-white' : 'bg-[#CCFF00] text-black'} text-[10px] font-bold flex items-center justify-center rounded-full`}>{cart.length}</span>}
             </div>
@@ -384,7 +399,7 @@ export default function App() {
          <div className="grid md:grid-cols-2 gap-12 items-start">
            
            {/* Enhanced Gallery Layout */}
-           <div className="space-y-4 sticky top-24">
+           <div className="space-y-4 md:sticky md:top-24">
              <div className={`aspect-[4/5] ${theme.card} border ${theme.border} relative overflow-hidden group w-full`}>
                {/* No Grayscale on PDP - Full vibrancy instantly */}
                <img src={selectedProduct.image} className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-105" alt={selectedProduct.name} />
@@ -531,27 +546,75 @@ export default function App() {
   );
 
   const Shop = () => {
-    const filteredProducts = shopCategory === 'All Categories' ? products : products.filter(p => p.category === shopCategory);
+    const [sortBy, setSortBy] = useState('recommended');
+
+    let filteredProducts = shopCategory === 'All Categories' ? products : products.filter(p => p.category === shopCategory);
+
+    // Apply sorting logic
+    if (sortBy === 'price-low') {
+      filteredProducts = [...filteredProducts].sort((a, b) => a.price - b.price);
+    } else if (sortBy === 'price-high') {
+      filteredProducts = [...filteredProducts].sort((a, b) => b.price - a.price);
+    }
+
     return (
       <div className="pt-24 pb-20 px-4 max-w-7xl mx-auto min-h-screen">
-        <div className={`flex justify-between items-end mb-8 border-b ${theme.border} pb-4`}>
-          <h2 className={`text-4xl font-black uppercase tracking-tighter ${theme.text}`} style={{ fontFamily: "'Impact', sans-serif" }}>Catalog</h2>
-          <div className="flex items-center gap-4">
-            <button onClick={() => setShowVibeMatcher(true)} className="hidden md:flex items-center gap-2 bg-[#8A2BE2]/20 text-[#8A2BE2] border border-[#8A2BE2] px-4 py-2 font-mono text-xs uppercase hover:bg-[#8A2BE2] hover:text-white transition-all"><Sparkles size={14} /> ✨ AI Vibe Check</button>
-            <div className="flex gap-4"><select value={shopCategory} onChange={(e) => setShopCategory(e.target.value)} className={`bg-transparent p-2 font-mono text-xs uppercase outline-none cursor-pointer ${theme.textMuted} ${theme.border} border`}><option>All Categories</option><option>Outerwear</option><option>Tops</option><option>Bottoms</option><option>Hardware</option></select></div>
+        
+        {/* Redesigned Rich Header */}
+        <div className="mb-6 md:mb-8">
+          <div className="flex flex-col md:flex-row md:items-end justify-between gap-4 mb-6">
+            <div>
+              <h2 className={`text-3xl md:text-5xl font-black uppercase tracking-tighter ${theme.text}`} style={{ fontFamily: "'Impact', sans-serif" }}>
+                {shopCategory === 'All Categories' ? 'The Collection' : shopCategory}
+              </h2>
+              <p className={`font-mono text-xs mt-1 md:mt-2 uppercase tracking-widest ${theme.textMuted}`}>
+                [{filteredProducts.length} Items Detected]
+              </p>
+            </div>
+            
+            {/* Action Buttons & Sorting */}
+            <div className="flex flex-wrap items-center gap-2 md:gap-4">
+              <button onClick={() => setShowVibeMatcher(true)} className="flex-1 md:flex-none justify-center flex items-center gap-2 bg-[#8A2BE2]/10 text-[#8A2BE2] border border-[#8A2BE2]/30 px-4 py-2.5 font-mono text-xs uppercase hover:bg-[#8A2BE2] hover:text-white transition-all">
+                <Sparkles size={14} /> AI Vibe Check
+              </button>
+              <div className={`flex items-center border ${theme.border} px-3 py-2.5 flex-1 md:flex-none bg-transparent`}>
+                <span className={`text-[10px] uppercase font-bold mr-2 ${theme.textMuted}`}>Sort:</span>
+                <select value={sortBy} onChange={e => setSortBy(e.target.value)} className={`bg-transparent font-mono text-xs uppercase outline-none cursor-pointer ${theme.text} w-full`}>
+                  <option value="recommended" className="bg-black text-white">Recommended</option>
+                  <option value="price-high" className="bg-black text-white">Price: High to Low</option>
+                  <option value="price-low" className="bg-black text-white">Price: Low to High</option>
+                </select>
+              </div>
+            </div>
+          </div>
+          
+          {/* Scrollable Category Chips */}
+          <div className="flex gap-2 overflow-x-auto pb-2 scrollbar-hide">
+             {['All Categories', 'Outerwear', 'Tops', 'Bottoms', 'Hardware'].map(cat => (
+               <button 
+                  key={cat} 
+                  onClick={() => setShopCategory(cat)}
+                  className={`whitespace-nowrap px-6 py-2.5 font-mono text-xs font-bold uppercase border transition-colors ${shopCategory === cat ? (isLight ? 'bg-black text-white border-black' : 'bg-[#CCFF00] text-black border-[#CCFF00]') : `border-${isLight?'black/10':'white/10'} ${theme.textMuted} hover:${theme.text} hover:border-${isLight?'black':'white'}`}`}
+               >
+                 {cat}
+               </button>
+             ))}
           </div>
         </div>
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-8">
+
+        {/* 2-Column Mobile & 4-Column Desktop Grid */}
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 md:gap-6">
         {filteredProducts.map(product => (
-          <div key={product.id} className="group cursor-pointer" onClick={() => openProduct(product)}>
-            <div className={`relative aspect-[3/4] ${theme.card} overflow-hidden border ${isLight ? 'border-black/5 group-hover:border-black/50' : 'border-white/5 group-hover:border-[#CCFF00]/50'} transition-colors mb-4`}>
-              {/* Removed Grayscale filter for instant vibrancy */}
+          <div key={product.id} className="group cursor-pointer flex flex-col" onClick={() => openProduct(product)}>
+            <div className={`relative aspect-[3/4] ${theme.card} overflow-hidden border ${isLight ? 'border-black/5 group-hover:border-black/50' : 'border-white/5 group-hover:border-[#CCFF00]/50'} transition-colors mb-3`}>
               <img src={product.image} alt={product.name} className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-105" />
-              {product.badge && <div className={`absolute top-4 left-4 text-[10px] font-bold px-2 py-1 uppercase mix-blend-screen ${isLight ? 'bg-black text-white' : 'bg-white text-black'}`}>{product.badge}</div>}
+              {product.badge && <div className={`absolute top-2 left-2 md:top-4 md:left-4 text-[8px] md:text-[10px] font-bold px-2 py-1 uppercase mix-blend-screen ${isLight ? 'bg-black text-white' : 'bg-white text-black'}`}>{product.badge}</div>}
+              <div className="absolute inset-0 bg-[#8A2BE2] mix-blend-overlay opacity-0 group-hover:opacity-20 transition-opacity hidden md:block"></div>
             </div>
-            <div className="flex justify-between items-start">
-              <div><h3 className={`font-bold uppercase tracking-wider text-sm mb-1 transition-colors ${theme.text} group-hover:text-[#8A2BE2]`}>{product.name}</h3><p className={`font-mono text-xs ${theme.textMuted}`}>{product.category}</p></div>
-              <span className={`font-mono font-bold ${isLight ? 'text-black font-extrabold' : 'text-[#E5E5E5]'}`}>₹{product.price}</span>
+            <div className="flex flex-col flex-1">
+              <h3 className={`font-bold uppercase tracking-tight text-[11px] md:text-sm mb-1 line-clamp-1 transition-colors ${theme.text} group-hover:text-[#8A2BE2]`}>{product.name}</h3>
+              <p className={`font-mono text-[9px] md:text-xs mb-2 ${theme.textMuted}`}>{product.category}</p>
+              <span className={`font-mono text-xs md:text-sm mt-auto ${isLight ? 'text-black font-extrabold' : 'text-[#E5E5E5] font-bold'}`}>₹{product.price}</span>
             </div>
           </div>
         ))}
@@ -1014,6 +1077,10 @@ export default function App() {
         ::-webkit-scrollbar-track { background: ${isLight ? '#f3f4f6' : '#050505'}; }
         ::-webkit-scrollbar-thumb { background: ${isLight ? '#d1d5db' : '#222'}; }
         ::-webkit-scrollbar-thumb:hover { background: #8A2BE2; }
+        
+        /* Mobile category pill scrollbar hide */
+        .scrollbar-hide::-webkit-scrollbar { display: none; }
+        .scrollbar-hide { -ms-overflow-style: none; scrollbar-width: none; }
       `}</style>
 
       {/* BLINDING FLASH OVERLAY */}
