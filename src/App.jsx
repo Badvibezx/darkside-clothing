@@ -6,14 +6,14 @@ import {
   LayoutDashboard, Package, Users, Activity, Plus, Trash2,
   Box, Tag, AlertTriangle, MessageSquare, Lock,
   ArrowLeft, Star, Ruler, ChevronDown, ChevronUp, RefreshCw,
-  AlertOctagon, CheckCircle, HelpCircle, Mail
+  AlertOctagon, CheckCircle, HelpCircle, Mail, MapPin, Settings as SettingsIcon, LogOut as LogOutIcon
 } from 'lucide-react';
 
 import { initializeApp } from 'firebase/app';
 import { 
   getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged, 
   signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut,
-  RecaptchaVerifier, signInWithPhoneNumber
+  RecaptchaVerifier, signInWithPhoneNumber, updateProfile
 } from 'firebase/auth';
 import { getFirestore, doc, setDoc, getDoc, collection, addDoc, query, onSnapshot, updateDoc } from 'firebase/firestore';
 
@@ -44,8 +44,13 @@ const INITIAL_PRODUCTS = [
   { id: 6, name: "STEALTH TACTICAL VEST", price: 4599, category: "Outerwear", stock: 8, image: "https://images.unsplash.com/photo-1608231387042-66d1773070a5?auto=format&fit=crop&q=80&w=800" },
 ];
 
-// --- GEMINI API HELPER ---
-const apiKey = ""; 
+const AVATAR_PRESETS = [
+  "https://images.unsplash.com/photo-1535295972055-1c762f4483e5?auto=format&fit=crop&w=150&q=80",
+  "https://images.unsplash.com/photo-1618609377866-63640b615822?auto=format&fit=crop&w=150&q=80",
+  "https://images.unsplash.com/photo-1511367461989-f85a21fda167?auto=format&fit=crop&w=150&q=80",
+  "https://images.unsplash.com/photo-1542831371-29b0f74f9713?auto=format&fit=crop&w=150&q=80"
+];
+
 const callGeminiAPI = async (prompt, schema = null) => {
   const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`;
   const payload = { contents: [{ parts: [{ text: prompt }] }], systemInstruction: { parts: [{ text: "You are a rogue, cyberpunk AI stylist for DARKSIDE CLOTHING INDIA. Speak with an edgy, dystopian tone." }] } };
@@ -65,892 +70,692 @@ const callGeminiAPI = async (prompt, schema = null) => {
   }
 };
 
-export default function App() {
-  const [view, setView] = useState('home');
-  const [cart, setCart] = useState([]);
-  const [wishlist, setWishlist] = useState([]);
-  const [products, setProducts] = useState(INITIAL_PRODUCTS);
-  const [isCartOpen, setIsCartOpen] = useState(false);
-  const [showSizeAI, setShowSizeAI] = useState(false);
-  const [showVibeMatcher, setShowVibeMatcher] = useState(false);
-  const [selectedProduct, setSelectedProduct] = useState(null);
-  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
-  const [shopCategory, setShopCategory] = useState('All Categories');
-  const [user, setUser] = useState(null);
-  const [checkoutMsg, setCheckoutMsg] = useState('');
-  const [isFlashing, setIsFlashing] = useState(false);
+// --- ISOLATED COMPONENTS FOR STABILITY ---
+const CustomCursor = () => {
+  const [mousePos, setMousePos] = useState({ x: 0, y: 0 });
+  const [isHoveringItem, setIsHoveringItem] = useState(false);
 
-  // Dynamic Theme State (Light mode when on Shop/Product/Help views)
-  const isLight = view !== 'home' && view !== 'admin';
-
-  // Theme Variables
-  const theme = {
-    bg: isLight ? 'bg-white' : 'bg-[#050505]',
-    text: isLight ? 'text-black' : 'text-white',
-    textMuted: isLight ? 'text-gray-600' : 'text-gray-400',
-    border: isLight ? 'border-black/10' : 'border-white/10',
-    card: isLight ? 'bg-gray-100' : 'bg-[#0A0A0A]',
-    input: isLight ? 'bg-white border-black/20 text-black focus:border-[#8A2BE2]' : 'bg-black border-white/20 text-white focus:border-[#CCFF00]',
-    btnPrimary: isLight ? 'bg-black text-white hover:bg-[#8A2BE2]' : 'bg-[#CCFF00] text-black hover:bg-white',
-    accent: isLight ? 'text-[#8A2BE2]' : 'text-[#CCFF00]',
-    accentHover: isLight ? 'hover:text-[#8A2BE2]' : 'hover:text-[#CCFF00]',
-  };
-
-  // Prevent background scrolling when overlays are open
   useEffect(() => {
-    if (isCartOpen || showSizeAI || showVibeMatcher || isMobileMenuOpen) {
-      document.body.style.overflow = 'hidden';
-    } else {
-      document.body.style.overflow = 'unset';
-    }
-    return () => { document.body.style.overflow = 'unset'; };
-  }, [isCartOpen, showSizeAI, showVibeMatcher, isMobileMenuOpen]);
-
-  // Browser History Navigation
-  useEffect(() => {
-    window.history.replaceState({ view: 'home', product: null }, '');
-    const handlePopState = (e) => {
-      if (e.state) {
-        setView(e.state.view || 'home');
-        if (e.state.product) {
-          const prod = products.find(p => p.id === e.state.product);
-          setSelectedProduct(prod || null);
-        } else { setSelectedProduct(null); }
-        setIsCartOpen(false); setShowSizeAI(false); setShowVibeMatcher(false); setIsMobileMenuOpen(false);
-      } else { setView('home'); setSelectedProduct(null); }
+    const handleMouseMove = (e) => {
+      setMousePos({ x: e.clientX, y: e.clientY });
+      const isClickable = e.target.closest('button, a, input, select, [role="button"], .cursor-pointer');
+      setIsHoveringItem(!!isClickable);
     };
-    window.addEventListener('popstate', handlePopState);
-    return () => window.removeEventListener('popstate', handlePopState);
-  }, [products]);
-
-  const handleNavigate = (newView) => {
-    setView(newView); setSelectedProduct(null); setIsMobileMenuOpen(false); window.scrollTo(0, 0);
-    window.history.pushState({ view: newView, product: null }, '', '#' + newView);
-  };
-
-  const openProduct = (product) => {
-    setSelectedProduct(product); window.scrollTo(0, 0);
-    window.history.pushState({ view: view, product: product.id }, '', '#product-' + product.id);
-  };
-
-  useEffect(() => {
-    const initAuth = async () => {
-      if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-        await signInWithCustomToken(auth, __initial_auth_token);
-      } else {
-        try { await signInAnonymously(auth); } catch (e) { console.error("Auth error:", e); }
-      }
-    };
-    initAuth();
-
-    const unsubscribe = onAuthStateChanged(auth, async (u) => {
-      setUser(u);
-      if (u) {
-        try {
-          const docSnap = await getDoc(doc(db, 'artifacts', appId, 'users', u.uid, 'userdata', 'state'));
-          if (docSnap.exists()) {
-            const data = docSnap.data();
-            if (data.cart) setCart(data.cart);
-            if (data.wishlist) setWishlist(data.wishlist);
-          }
-        } catch (err) { console.error("Error fetching user data", err); }
-      }
-    });
-    return () => unsubscribe();
+    window.addEventListener('mousemove', handleMouseMove);
+    return () => window.removeEventListener('mousemove', handleMouseMove);
   }, []);
 
-  const saveUserData = async (newCart, newWishlist) => {
-    if (!user) return;
-    try { await setDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'userdata', 'state'), { cart: newCart, wishlist: newWishlist }, { merge: true }); } catch(e) {}
+  return (
+    <div 
+      className="hidden md:flex fixed top-0 left-0 w-6 h-6 rounded-full pointer-events-none z-[99999] mix-blend-difference transition-transform duration-100 ease-out items-center justify-center"
+      style={{ transform: `translate(${mousePos.x - 12}px, ${mousePos.y - 12}px) scale(${isHoveringItem ? 2.5 : 1})`, backgroundColor: isHoveringItem ? 'transparent' : '#CCFF00', border: isHoveringItem ? '1px solid #CCFF00' : 'none' }}
+    >
+      {isHoveringItem && <span className="text-[4px] font-mono text-[#CCFF00] font-bold">EXPLORE</span>}
+    </div>
+  );
+};
+
+const CountdownTimer = () => {
+  const [timeLeft, setTimeLeft] = useState({ h: 24, m: 0, s: 0 });
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setTimeLeft(prev => { let { h, m, s } = prev; if (s > 0) s--; else if (m > 0) { m--; s = 59; } else if (h > 0) { h--; m = 59; s = 59; } return { h, m, s }; });
+    }, 1000);
+    return () => clearInterval(timer);
+  }, []);
+  return (
+    <div className="flex justify-center gap-4 mb-8 font-mono">
+      {[{ label: 'HRS', value: timeLeft.h }, { label: 'MIN', value: timeLeft.m }, { label: 'SEC', value: timeLeft.s }].map((t, i) => (
+        <div key={i} className="flex flex-col items-center"><span className="text-4xl md:text-6xl text-white font-black bg-[#0A0A0A] border border-white/10 p-4 w-20 md:w-24 text-center">{String(t.value).padStart(2, '0')}</span><span className="text-[10px] text-gray-500 mt-2">{t.label}</span></div>
+      ))}
+    </div>
+  );
+};
+
+const SizePredictor = ({ appState }) => {
+  const { theme, isLight, setShowSizeAI } = appState;
+  const [height, setHeight] = useState(''); const [weight, setWeight] = useState(''); const [fit, setFit] = useState('OVERSIZED (STREET)'); const [loading, setLoading] = useState(false); const [result, setResult] = useState('');
+  const handleCalculate = async () => {
+    if (!height || !weight) return; setLoading(true); setResult('');
+    try { setResult(await callGeminiAPI(`Calculate the optimal clothing size (S, M, L, XL) for user: ${height}cm, ${weight}kg, prefers ${fit}. Reply ONLY size on line 1, edgy cyberpunk styling tip on line 2.`)); } 
+    catch (err) { setResult("SYSTEM ERROR: UNABLE TO CONNECT TO NEURAL NET."); } finally { setLoading(false); }
   };
-
-  const enterVault = () => {
-    if (typeof navigator !== 'undefined' && navigator.vibrate) navigator.vibrate([200, 50, 200]);
-    setIsFlashing(true);
-    setTimeout(() => { handleNavigate('shop'); setTimeout(() => { setIsFlashing(false); }, 100); }, 500);
-  };
-
-  const toggleWishlist = (product) => {
-    let newWishlist = wishlist.find(item => item.id === product.id) ? wishlist.filter(item => item.id !== product.id) : [...wishlist, product];
-    setWishlist(newWishlist); saveUserData(cart, newWishlist);
-  };
-  const addToCart = (product) => { const newCart = [...cart, product]; setCart(newCart); setIsCartOpen(true); saveUserData(newCart, wishlist); };
-  const removeFromCart = (index) => { const newCart = cart.filter((_, i) => i !== index); setCart(newCart); saveUserData(newCart, wishlist); };
-
-  const cartTotal = cart.reduce((sum, item) => sum + item.price, 0);
-  const freeShippingThreshold = 5000;
-  const progressToFreeShipping = Math.min((cartTotal / freeShippingThreshold) * 100, 100);
-
-  // --- RESTORED SUB-COMPONENTS ---
-  const CustomCursor = () => {
-    const [mousePos, setMousePos] = useState({ x: 0, y: 0 });
-    const [isHoveringItem, setIsHoveringItem] = useState(false);
-  
-    useEffect(() => {
-      const handleMouseMove = (e) => {
-        setMousePos({ x: e.clientX, y: e.clientY });
-        const isClickable = e.target.closest('button, a, input, select, [role="button"], .cursor-pointer');
-        setIsHoveringItem(!!isClickable);
-      };
-      window.addEventListener('mousemove', handleMouseMove);
-      return () => window.removeEventListener('mousemove', handleMouseMove);
-    }, []);
-  
-    return (
-      <div 
-        className="hidden md:flex fixed top-0 left-0 w-6 h-6 rounded-full pointer-events-none z-[99999] mix-blend-difference transition-transform duration-100 ease-out items-center justify-center"
-        style={{ 
-          transform: `translate(${mousePos.x - 12}px, ${mousePos.y - 12}px) scale(${isHoveringItem ? 2.5 : 1})`,
-          backgroundColor: isHoveringItem ? 'transparent' : '#CCFF00',
-          border: isHoveringItem ? '1px solid #CCFF00' : 'none'
-        }}
-      >
-        {isHoveringItem && <span className="text-[4px] font-mono text-[#CCFF00] font-bold">EXPLORE</span>}
-      </div>
-    );
-  };
-
-  const CountdownTimer = () => {
-    const [timeLeft, setTimeLeft] = useState({ h: 24, m: 0, s: 0 });
-    useEffect(() => {
-      const timer = setInterval(() => {
-        setTimeLeft(prev => {
-          let { h, m, s } = prev;
-          if (s > 0) s--; else if (m > 0) { m--; s = 59; } else if (h > 0) { h--; m = 59; s = 59; }
-          return { h, m, s };
-        });
-      }, 1000);
-      return () => clearInterval(timer);
-    }, []);
-    return (
-      <div className="flex justify-center gap-4 mb-8 font-mono">
-        {[{ label: 'HRS', value: timeLeft.h }, { label: 'MIN', value: timeLeft.m }, { label: 'SEC', value: timeLeft.s }].map((t, i) => (
-          <div key={i} className="flex flex-col items-center">
-            <span className="text-4xl md:text-6xl text-white font-black bg-[#0A0A0A] border border-white/10 p-4 w-20 md:w-24 text-center">{String(t.value).padStart(2, '0')}</span>
-            <span className="text-[10px] text-gray-500 mt-2">{t.label}</span>
+  return (
+    <div className="fixed inset-0 z-[70] bg-black/90 flex items-center justify-center p-4 backdrop-blur-sm">
+      <div className={`${isLight ? 'bg-white border-black/20' : 'bg-[#0A0A0A] border-[#CCFF00]/30'} border w-full max-w-md p-6 relative`}>
+        <button onClick={() => setShowSizeAI(false)} className={`absolute top-4 right-4 ${theme.textMuted} hover:${theme.text}`}><X size={20} /></button>
+        <div className="flex items-center gap-2 mb-6"><Fingerprint className="text-[#8A2BE2]" /><h3 className={`text-xl font-bold uppercase tracking-wider ${theme.text}`} style={{ fontFamily: "'Impact', sans-serif" }}>AI Fit Predictor</h3></div>
+        {result ? (
+          <div className="space-y-4 font-mono text-sm animate-in fade-in zoom-in duration-500">
+             <div className={`p-4 border ${isLight ? 'border-[#8A2BE2] bg-[#8A2BE2]/10 text-[#8A2BE2]' : 'border-[#CCFF00] bg-[#CCFF00]/10 text-[#CCFF00]'}`}><p className="font-bold mb-2 uppercase">ANALYSIS COMPLETE:</p>{result.split('\n').map((line, i) => (<p key={i} className={i === 0 ? "text-2xl font-black mb-2" : `text-xs ${theme.textMuted}`}>{line}</p>))}</div>
+             <button onClick={() => setShowSizeAI(false)} className={`w-full font-bold py-3 uppercase transition-colors ${theme.btnPrimary}`}>Acknowledge & Return</button>
           </div>
-        ))}
-      </div>
-    );
-  };
-
-  const SizePredictor = () => {
-    const [height, setHeight] = useState(''); const [weight, setWeight] = useState(''); const [fit, setFit] = useState('OVERSIZED (STREET)'); const [loading, setLoading] = useState(false); const [result, setResult] = useState('');
-    const handleCalculate = async () => {
-      if (!height || !weight) return; setLoading(true); setResult('');
-      try { setResult(await callGeminiAPI(`Calculate the optimal clothing size (S, M, L, XL) for user: ${height}cm, ${weight}kg, prefers ${fit}. Reply ONLY size on line 1, edgy cyberpunk styling tip on line 2.`)); } 
-      catch (err) { setResult("SYSTEM ERROR: UNABLE TO CONNECT TO NEURAL NET."); } finally { setLoading(false); }
-    };
-    return (
-      <div className="fixed inset-0 z-[70] bg-black/90 flex items-center justify-center p-4 backdrop-blur-sm">
-        <div className={`${isLight ? 'bg-white border-black/20' : 'bg-[#0A0A0A] border-[#CCFF00]/30'} border w-full max-w-md p-6 relative`}>
-          <button onClick={() => setShowSizeAI(false)} className={`absolute top-4 right-4 ${theme.textMuted} hover:${theme.text}`}><X size={20} /></button>
-          <div className="flex items-center gap-2 mb-6"><Fingerprint className="text-[#8A2BE2]" /><h3 className={`text-xl font-bold uppercase tracking-wider ${theme.text}`} style={{ fontFamily: "'Impact', sans-serif" }}>AI Fit Predictor</h3></div>
-          {result ? (
-            <div className="space-y-4 font-mono text-sm animate-in fade-in zoom-in duration-500">
-               <div className={`p-4 border ${isLight ? 'border-[#8A2BE2] bg-[#8A2BE2]/10 text-[#8A2BE2]' : 'border-[#CCFF00] bg-[#CCFF00]/10 text-[#CCFF00]'}`}><p className="font-bold mb-2 uppercase">ANALYSIS COMPLETE:</p>{result.split('\n').map((line, i) => (<p key={i} className={i === 0 ? "text-2xl font-black mb-2" : `text-xs ${theme.textMuted}`}>{line}</p>))}</div>
-               <button onClick={() => setShowSizeAI(false)} className={`w-full font-bold py-3 uppercase transition-colors ${theme.btnPrimary}`}>Acknowledge & Return</button>
-            </div>
-          ) : (
-            <>
-              <p className={`font-mono text-xs mb-6 ${theme.textMuted}`}>ENTER BIOMETRICS FOR EXACT SIZING VIA NEURAL NET.</p>
-              <div className="space-y-4 font-mono text-sm">
-                <div><label className={`block mb-1 ${theme.accent}`}>HEIGHT (CM)</label><input type="number" value={height} onChange={e => setHeight(e.target.value)} placeholder="e.g. 175" className={`w-full p-3 outline-none transition-colors ${theme.input}`} /></div>
-                <div><label className={`block mb-1 ${theme.accent}`}>WEIGHT (KG)</label><input type="number" value={weight} onChange={e => setWeight(e.target.value)} placeholder="e.g. 70" className={`w-full p-3 outline-none transition-colors ${theme.input}`} /></div>
-                <div><label className={`block mb-1 ${theme.accent}`}>FIT PREFERENCE</label><select value={fit} onChange={e => setFit(e.target.value)} className={`w-full p-3 outline-none appearance-none cursor-pointer transition-colors ${theme.input}`}><option>OVERSIZED (STREET)</option><option>REGULAR (CLEAN)</option><option>SNUG (AERO)</option></select></div>
-                <button onClick={handleCalculate} disabled={loading || !height || !weight} className={`w-full text-black font-bold py-4 mt-4 uppercase disabled:opacity-50 flex justify-center items-center gap-2 ${theme.btnPrimary}`}>
-                  {loading ? <Loader2 className="animate-spin" size={18} /> : <Sparkles size={18} />}{loading ? "CALCULATING..." : "✨ PREDICT FIT"}
-                </button>
-              </div>
-            </>
-          )}
-        </div>
-      </div>
-    );
-  };
-
-  const VibeMatcher = () => {
-    const [scenario, setScenario] = useState(''); const [loading, setLoading] = useState(false); const [recommendations, setRecommendations] = useState(null);
-    const handleMatch = async () => {
-      if (!scenario) return; setLoading(true);
-      try {
-        const catalogContext = products.map(p => `{id: ${p.id}, name: "${p.name}"}`).join(', ');
-        const jsonText = await callGeminiAPI(`Scenario: "${scenario}". Pick 2 exact products matching vibe: [${catalogContext}].`, { type: "OBJECT", properties: { items: { type: "ARRAY", items: { type: "INTEGER" } }, reasoning: { type: "STRING" } }, required: ["items", "reasoning"] });
-        const data = JSON.parse(jsonText);
-        setRecommendations({ products: data.items.map(id => products.find(p => p.id === id)).filter(Boolean), reasoning: data.reasoning });
-      } catch (err) { setRecommendations({ error: "NEURAL LINK SEVERED. TRY AGAIN." }); } finally { setLoading(false); }
-    };
-    return (
-      <div className="fixed inset-0 z-[70] bg-black/90 flex items-center justify-center p-4 backdrop-blur-sm">
-        <div className={`${isLight ? 'bg-white' : 'bg-[#0A0A0A]'} border border-[#8A2BE2]/50 w-full max-w-2xl p-6 relative`}>
-          <button onClick={() => setShowVibeMatcher(false)} className={`absolute top-4 right-4 ${theme.textMuted} hover:${theme.text}`}><X size={20} /></button>
-          <div className="flex items-center gap-2 mb-2"><Sparkles className="text-[#8A2BE2]" /><h3 className={`text-2xl font-black uppercase tracking-wider ${theme.text}`} style={{ fontFamily: "'Impact', sans-serif" }}>AI Vibe Matcher</h3></div>
-          <p className={`font-mono text-xs mb-6 ${theme.textMuted}`}>DESCRIBE YOUR DESTINATION. THE NEURAL NET WILL FORGE YOUR OUTFIT.</p>
-          {!recommendations ? (
-            <div className="space-y-4 font-mono">
-               <textarea value={scenario} onChange={e => setScenario(e.target.value)} placeholder="e.g., Underground techno rave in Berlin..." className={`w-full p-4 outline-none h-32 resize-none transition-colors ${theme.input}`} />
-               <button onClick={handleMatch} disabled={loading || !scenario} className={`w-full font-bold py-4 uppercase transition-colors disabled:opacity-50 flex justify-center items-center gap-2 ${theme.btnPrimary}`}>
-                  {loading ? <Loader2 className="animate-spin" size={18} /> : <Zap size={18} />}{loading ? "SCANNING CATALOG..." : "✨ GENERATE FIT"}
-                </button>
-            </div>
-          ) : recommendations.error ? ( <p className="text-red-500 font-mono text-center py-8">{recommendations.error}</p> ) : (
-            <div className="animate-in fade-in duration-500">
-               <div className={`p-4 border-l-4 border-[#8A2BE2] bg-[#8A2BE2]/10 mb-6 font-mono text-sm italic ${theme.text}`}>"{recommendations.reasoning}"</div>
-               <div className="grid grid-cols-2 gap-4 mb-6">
-                 {recommendations.products.map((p, idx) => (
-                   p ? <div key={p.id || idx} className={`border p-2 flex gap-3 ${theme.border} ${theme.card}`}><img src={p.image} className="w-16 h-20 object-cover grayscale" /><div className="flex flex-col justify-center"><p className={`font-bold text-xs uppercase ${theme.text}`}>{p.name}</p><p className={`font-mono text-xs mt-1 ${theme.accent}`}>₹{p.price}</p><button onClick={() => addToCart(p)} className="text-left text-[#8A2BE2] text-[10px] font-mono uppercase mt-2 hover:underline">+ Add to Cart</button></div></div> : null
-                 ))}
-               </div>
-               <button onClick={() => setRecommendations(null)} className={`w-full border font-bold py-3 uppercase font-mono text-sm transition-colors ${theme.border} ${theme.text} hover:bg-gray-200`}>Reset Vibe</button>
-            </div>
-          )}
-        </div>
-      </div>
-    );
-  };
-
-  const Navbar = () => {
-    if (view === 'admin') return null;
-    return (
-      <nav className={`fixed top-0 w-full z-50 ${isLight ? 'bg-white/90 border-black/10' : 'bg-[#050505]/80 border-white/10'} backdrop-blur-lg border-b transition-colors duration-1000`}>
-        <div className="max-w-7xl mx-auto px-4 h-20 flex items-center justify-between">
-          <div className="flex items-center gap-4">
-            <Menu className={`md:hidden cursor-pointer ${isLight ? 'text-black hover:text-[#8A2BE2]' : 'text-white hover:text-[#CCFF00]'}`} onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)} />
-            <div onClick={() => handleNavigate('home')} className="cursor-pointer relative z-50 flex items-center group">
-              <img src="451404688_834030975111165_2058569119566201452_n.jpg" alt="Darkside" className="h-14 md:h-16 object-contain group-hover:scale-105 transition-transform" style={{ filter: isLight ? 'invert(1)' : 'contrast(1.4) brightness(1.1)', mixBlendMode: isLight ? 'normal' : 'screen' }} onError={(e) => { e.target.onerror = null; e.target.src = `https://placehold.co/400x150/${isLight ? 'FFFFFF' : '050505'}/${isLight ? '000000' : 'CCFF00'}?text=YOUR+LOGO+HERE`; e.target.style.filter = "none"; e.target.style.mixBlendMode = "normal"; }} />
-              <h1 className={`hidden text-3xl font-black tracking-tighter cursor-pointer uppercase glitch-hover ${isLight ? 'text-black' : 'text-white'}`} style={{ fontFamily: "'Impact', sans-serif" }}>DARK<span className={isLight ? 'text-[#8A2BE2]' : 'text-[#CCFF00]'}>SIDE</span></h1>
-            </div>
-          </div>
-          <div className="hidden md:flex items-center space-x-8">
-            {['Tees', 'Hoodies', 'Cargos'].map(link => (
-              <button key={link} onClick={() => { setShopCategory(link === 'Tees' ? 'Tops' : link === 'Hoodies' ? 'Outerwear' : 'Bottoms'); handleNavigate('shop'); }} className={`text-sm font-mono uppercase tracking-widest transition-colors magnetic ${isLight ? 'text-gray-600 hover:text-black' : 'text-[#E5E5E5] hover:text-[#CCFF00]'}`}>{link}</button>
-            ))}
-          </div>
-          <div className="flex items-center gap-5 md:gap-6">
-            <Search className={`cursor-pointer hidden md:block w-5 h-5 ${theme.text} ${theme.accentHover}`} onClick={() => handleNavigate('shop')} />
-            <User onClick={() => handleNavigate(user && !user.isAnonymous ? 'account' : 'auth')} className={`cursor-pointer w-5 h-5 ${theme.text} ${theme.accentHover}`} />
-            <div className="relative cursor-pointer hidden md:block" onClick={() => handleNavigate('vault')}>
-              <Heart className={`w-5 h-5 ${theme.text} hover:text-[#8A2BE2]`} />
-              {wishlist.length > 0 && <span className="absolute -top-2 -right-2 w-4 h-4 bg-[#8A2BE2] text-white text-[10px] font-bold flex items-center justify-center rounded-full">{wishlist.length}</span>}
-            </div>
-            <div className="relative cursor-pointer" onClick={() => { setIsCartOpen(true); setIsMobileMenuOpen(false); }}>
-              <ShoppingBag className={`w-5 h-5 ${theme.text} hover:text-[#8A2BE2]`} />
-              {cart.length > 0 && <span className={`absolute -top-2 -right-2 w-4 h-4 ${isLight ? 'bg-black text-white' : 'bg-[#CCFF00] text-black'} text-[10px] font-bold flex items-center justify-center rounded-full`}>{cart.length}</span>}
-            </div>
-          </div>
-        </div>
-        {isMobileMenuOpen && (
-          <div className={`md:hidden border-b p-4 flex flex-col gap-4 absolute top-20 left-0 w-full z-40 ${isLight ? 'bg-white border-black/10' : 'bg-[#0A0A0A] border-white/10'}`}>
-            {['Home', 'Shop', 'Vault', 'Help & FAQs', user && !user.isAnonymous ? 'Account' : 'Login'].map(link => (
-              <button key={link} onClick={() => { 
-                  if(link === 'Help & FAQs') handleNavigate('help');
-                  else if(link === 'Login') handleNavigate('auth');
-                  else { setShopCategory('All Categories'); handleNavigate(link.toLowerCase()); }
-              }} className={`text-left font-mono uppercase py-2 border-b ${isLight ? 'text-black border-black/5 hover:text-[#8A2BE2]' : 'text-white border-white/5 hover:text-[#CCFF00]'}`}>{link}</button>
-            ))}
-          </div>
-        )}
-      </nav>
-    );
-  };
-
-  // --- REDESIGNED AUTH WITH REAL FIREBASE OTP & EMAIL FALLBACK ---
-  const AuthView = () => {
-    const [authMode, setAuthMode] = useState('phone'); // 'phone' or 'email'
-    const [phone, setPhone] = useState('');
-    const [otpSent, setOtpSent] = useState(false);
-    const [otp, setOtp] = useState('');
-    const [email, setEmail] = useState('');
-    const [password, setPassword] = useState('');
-    const [isSignup, setIsSignup] = useState(false);
-    const [error, setError] = useState(''); 
-    const [loading, setLoading] = useState(false);
-    
-    // Strict number input handler
-    const handlePhoneChange = (e) => {
-      const val = e.target.value.replace(/\D/g, '');
-      if (val.length <= 10) setPhone(val);
-    };
-
-    // REAL FIREBASE SMS LOGIC
-    const handleSendOTP = async (e) => {
-      e.preventDefault();
-      if (phone.length !== 10) return setError("IDENTIFIER FAILED: Must be exactly 10 digits.");
-      setError(''); setLoading(true);
-      
-      try {
-        if (!window.recaptchaVerifier) {
-          window.recaptchaVerifier = new RecaptchaVerifier(auth, 'recaptcha-container', {
-            'size': 'invisible'
-          });
-        }
-        const appVerifier = window.recaptchaVerifier;
-        const formatPhone = "+91" + phone;
-        
-        const confirmationResult = await signInWithPhoneNumber(auth, formatPhone, appVerifier);
-        window.confirmationResult = confirmationResult;
-        setOtpSent(true);
-      } catch (err) {
-        console.error("SMS Error", err);
-        setError(`SMS FAILED: ${err.message}`); // Output exact error for debugging
-        if (window.recaptchaVerifier) {
-          window.recaptchaVerifier.clear();
-          window.recaptchaVerifier = null;
-        }
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    const handleVerifyOTP = async (e) => {
-      e.preventDefault();
-      if (otp.length !== 6) return setError("INVALID OTP FORMAT.");
-      setError(''); setLoading(true);
-      
-      try { 
-        await window.confirmationResult.confirm(otp);
-        handleNavigate('account'); 
-      } catch (err) { 
-        setError("INVALID OTP. ACCESS DENIED.");
-      } finally { 
-        setLoading(false); 
-      }
-    };
-
-    // STANDARD EMAIL LOGIC
-    const handleEmailAuth = async (e) => {
-      e.preventDefault();
-      setError(''); setLoading(true);
-
-      // -- HIDDEN ADMIN BYPASS --
-      if (email === 'admin@darkside.com' && password === 'darkside') {
-         setTimeout(() => { setLoading(false); handleNavigate('admin'); }, 800);
-         return;
-      }
-
-      try { 
-        isSignup ? await createUserWithEmailAndPassword(auth, email, password) : await signInWithEmailAndPassword(auth, email, password); 
-        handleNavigate('account'); 
-      } catch (err) { 
-        setError(err.message); 
-      } finally { 
-        setLoading(false); 
-      } 
-    };
-
-    return (
-      <div className="pt-32 px-4 max-w-md mx-auto min-h-screen">
-        <div className={`${theme.card} border ${theme.border} p-8 relative overflow-hidden`}>
-          
-          <h2 className={`text-4xl font-black uppercase tracking-tighter mb-2 ${theme.text}`} style={{ fontFamily: "'Impact', sans-serif" }}>
-            Join The Syndicate
-          </h2>
-          <p className={`font-mono text-xs mb-8 ${theme.textMuted}`}>
-            AUTHENTICATE VIA SECURE TERMINAL.
-          </p>
-          
-          {error && <p className="text-red-500 font-mono text-xs mb-4 p-2 bg-red-500/10 border border-red-500/30 flex items-center gap-2"><AlertOctagon size={14}/> {error}</p>}
-          
-          {/* Invisible Recaptcha required by Firebase Phone Auth */}
-          <div id="recaptcha-container"></div>
-
-          {authMode === 'phone' && (
-            !otpSent ? (
-              <form onSubmit={handleSendOTP} className="space-y-4 font-mono text-sm">
-                <div>
-                  <label className={`block mb-1 font-bold ${theme.accent}`}>PHONE NUMBER (10 DIGITS)</label>
-                  <div className="flex items-center">
-                    <span className={`p-3 border border-r-0 ${isLight ? 'bg-gray-200 border-black/20 text-gray-500' : 'bg-gray-900 border-white/20 text-gray-500'}`}>+91</span>
-                    <input type="text" value={phone} onChange={handlePhoneChange} placeholder="9999999999" required className={`w-full p-3 outline-none ${theme.input}`} />
-                  </div>
-                </div>
-                <button disabled={loading || phone.length !== 10} type="submit" className={`w-full font-black py-4 mt-4 uppercase tracking-widest disabled:opacity-50 flex justify-center items-center gap-2 ${theme.btnPrimary}`}>
-                  {loading ? <Loader2 className="animate-spin" size={18} /> : <Smartphone size={18} />} GET OTP
-                </button>
-                <button type="button" onClick={() => setAuthMode('email')} className={`w-full text-center text-xs mt-4 hover:underline ${theme.textMuted} flex justify-center items-center gap-1`}><Mail size={12}/> Switch to Email Login</button>
-              </form>
-            ) : (
-              <form onSubmit={handleVerifyOTP} className="space-y-4 font-mono text-sm animate-in fade-in">
-                <div className={`p-3 text-xs mb-4 border ${isLight ? 'bg-green-100 border-green-500 text-green-700' : 'bg-green-900/30 border-green-500 text-green-400'}`}>
-                  OTP successfully dispatched to +91 {phone}.
-                </div>
-                <div>
-                  <label className={`block mb-1 font-bold ${theme.accent}`}>ENTER 6-DIGIT OTP</label>
-                  <input type="text" maxLength={6} value={otp} onChange={(e) => setOtp(e.target.value.replace(/\D/g, ''))} placeholder="• • • • • •" required className={`w-full p-3 tracking-[1em] text-center font-bold text-xl outline-none ${theme.input}`} />
-                </div>
-                <button disabled={loading || otp.length !== 6} type="submit" className={`w-full font-black py-4 mt-4 uppercase tracking-widest disabled:opacity-50 flex justify-center items-center gap-2 ${theme.btnPrimary}`}>
-                  {loading ? <Loader2 className="animate-spin" size={18} /> : <Fingerprint size={18} />} VERIFY & ENTER
-                </button>
-                <button type="button" onClick={() => setOtpSent(false)} className={`w-full text-center text-xs mt-2 hover:underline ${theme.textMuted}`}>Change Phone Number</button>
-              </form>
-            )
-          )}
-
-          {authMode === 'email' && (
-            <form onSubmit={handleEmailAuth} className="space-y-4 font-mono text-sm animate-in fade-in">
-              <div><label className={`block mb-1 font-bold ${theme.accent}`}>EMAIL IDENTIFIER</label><input type="email" value={email} onChange={e=>setEmail(e.target.value)} required className={`w-full p-3 outline-none ${theme.input}`} /></div>
-              <div><label className={`block mb-1 font-bold ${theme.accent}`}>PASSCODE</label><input type="password" value={password} onChange={e=>setPassword(e.target.value)} required className={`w-full p-3 outline-none ${theme.input}`} /></div>
-              <button disabled={loading} type="submit" className={`w-full font-black py-4 mt-4 uppercase tracking-widest disabled:opacity-50 flex justify-center items-center gap-2 ${theme.btnPrimary}`}>
-                {loading ? <Loader2 className="animate-spin" size={18} /> : (isSignup ? "Create Identity" : "Initialize Login")}
+        ) : (
+          <>
+            <p className={`font-mono text-xs mb-6 ${theme.textMuted}`}>ENTER BIOMETRICS FOR EXACT SIZING VIA NEURAL NET.</p>
+            <div className="space-y-4 font-mono text-sm">
+              <div><label className={`block mb-1 ${theme.accent}`}>HEIGHT (CM)</label><input type="number" value={height} onChange={e => setHeight(e.target.value)} placeholder="e.g. 175" className={`w-full p-3 outline-none transition-colors ${theme.input}`} /></div>
+              <div><label className={`block mb-1 ${theme.accent}`}>WEIGHT (KG)</label><input type="number" value={weight} onChange={e => setWeight(e.target.value)} placeholder="e.g. 70" className={`w-full p-3 outline-none transition-colors ${theme.input}`} /></div>
+              <div><label className={`block mb-1 ${theme.accent}`}>FIT PREFERENCE</label><select value={fit} onChange={e => setFit(e.target.value)} className={`w-full p-3 outline-none appearance-none cursor-pointer transition-colors ${theme.input}`}><option>OVERSIZED (STREET)</option><option>REGULAR (CLEAN)</option><option>SNUG (AERO)</option></select></div>
+              <button onClick={handleCalculate} disabled={loading || !height || !weight} className={`w-full text-black font-bold py-4 mt-4 uppercase disabled:opacity-50 flex justify-center items-center gap-2 ${theme.btnPrimary}`}>
+                {loading ? <Loader2 className="animate-spin" size={18} /> : <Sparkles size={18} />}{loading ? "CALCULATING..." : "✨ PREDICT FIT"}
               </button>
-              <div className="flex justify-between items-center mt-4">
-                <button type="button" onClick={() => setIsSignup(!isSignup)} className={`text-xs hover:underline ${theme.textMuted}`}>{isSignup ? "Have an account?" : "Need an account?"}</button>
-                <button type="button" onClick={() => setAuthMode('phone')} className={`text-xs hover:underline ${theme.textMuted} flex items-center gap-1`}><Smartphone size={12}/> Use Phone</button>
-              </div>
-            </form>
-          )}
-
-        </div>
-      </div>
-    );
-  };
-
-  // --- REDESIGNED CHECKOUT & UNBOXING MODAL ---
-  const CheckoutView = () => {
-    const [formData, setFormData] = useState({ name: '', address: '', city: '', state: '', pin: '', phone: '' });
-    const [paymentMode, setPaymentMode] = useState('UPI');
-    const [processing, setProcessing] = useState(false);
-    const [showSuccessModal, setShowSuccessModal] = useState(false);
-    const [fetchingCity, setFetchingCity] = useState(false);
-
-    // Strict Phone validation
-    const handlePhoneChange = (e) => {
-      const val = e.target.value.replace(/\D/g, '').slice(0, 10);
-      setFormData({...formData, phone: val});
-    };
-
-    // Pincode validation and Auto-Fetch
-    const handlePinChange = async (e) => {
-      const val = e.target.value.replace(/\D/g, '').slice(0, 6);
-      setFormData(prev => ({...prev, pin: val}));
-      
-      if (val.length === 6) {
-        setFetchingCity(true);
-        try {
-          const res = await fetch(`https://api.postalpincode.in/pincode/${val}`);
-          const data = await res.json();
-          if (data && data[0].Status === 'Success') {
-            const po = data[0].PostOffice[0];
-            setFormData(prev => ({...prev, city: po.District, state: po.State}));
-          }
-        } catch (e) {
-          console.error("Pincode fetch failed", e);
-        } finally {
-          setFetchingCity(false);
-        }
-      }
-    };
-
-    const handlePlaceOrder = async (e) => { 
-      e.preventDefault(); 
-      if(!user) { alert("AUTHENTICATION REQUIRED."); return; }
-      if(formData.phone.length !== 10) { alert("PHONE MUST BE 10 DIGITS."); return; }
-      if(formData.pin.length !== 6) { alert("PINCODE MUST BE 6 DIGITS."); return; }
-      
-      setProcessing(true); 
-      try {
-        const orderTotal = cartTotal > freeShippingThreshold ? cartTotal : cartTotal + 150;
-        // Use the pseudo-email mapping from auth to display clean phone number in admin panel
-        const displayUser = user.email ? user.email.replace('@cyber.net', '') : 'Guest';
-        
-        const orderData = { 
-          userId: user.uid, 
-          userEmail: displayUser, 
-          items: cart, 
-          total: orderTotal, 
-          shippingInfo: formData, 
-          paymentMode: paymentMode, 
-          status: 'PENDING', 
-          createdAt: new Date().toISOString() 
-        };
-        await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'orders'), orderData);
-        setCart([]); saveUserData([], wishlist); 
-        setProcessing(false);
-        setShowSuccessModal(true); // Trigger Mandatory Video Modal
-      } catch (err) { 
-        console.error("Order sync failed", err); 
-        alert("TRANSMISSION FAILED. PLEASE TRY AGAIN."); 
-        setProcessing(false); 
-      }
-    };
-
-    if (showSuccessModal) {
-      return (
-        <div className="fixed inset-0 z-[999] bg-black flex items-center justify-center p-4">
-          <div className="bg-[#0A0A0A] border border-red-500/50 w-full max-w-lg p-8 relative flex flex-col items-center text-center animate-in fade-in zoom-in duration-500">
-            <div className="w-20 h-20 rounded-full bg-red-500/10 flex items-center justify-center mb-6">
-              <AlertOctagon size={40} className="text-red-500 animate-pulse" />
             </div>
-            <h2 className="text-3xl font-black text-white uppercase tracking-tighter mb-2" style={{ fontFamily: "'Impact', sans-serif" }}>Order Secured</h2>
-            <p className="font-mono text-sm text-[#CCFF00] mb-6 tracking-widest">TRANSMISSION SUCCESSFUL</p>
-            
-            <div className="bg-red-500/10 border border-red-500/30 p-5 mb-8 text-left">
-              <h3 className="text-red-500 font-bold uppercase text-sm mb-2 flex items-center gap-2"><Lock size={16}/> Mandatory Protocol</h3>
-              <p className="font-mono text-xs text-gray-300 leading-relaxed">
-                To combat tampering in the supply chain, you <span className="text-white font-bold underline">MUST</span> record a clear, continuous unboxing video when your package arrives. 
-                <br/><br/>
-                No claims for missing or damaged items will be processed without unedited video evidence showing the sealed package being opened.
-              </p>
-            </div>
-            
-            <button onClick={() => { setShowSuccessModal(false); handleNavigate('account'); }} className="w-full bg-white text-black font-black py-4 uppercase tracking-widest hover:bg-[#CCFF00] transition-colors">
-              I Acknowledge & Understand
-            </button>
-          </div>
-        </div>
-      );
-    }
-
-    if (cart.length === 0) return (
-      <div className="pt-32 px-4 max-w-4xl mx-auto min-h-screen text-center">
-        <h2 className={`text-4xl font-black uppercase tracking-tighter mb-4 ${theme.text}`} style={{ fontFamily: "'Impact', sans-serif" }}>Secure Checkout</h2>
-        <p className={`font-mono text-sm mb-6 ${theme.textMuted}`}>YOUR CART IS EMPTY. RETURN TO THE VOID.</p>
-        <button onClick={() => handleNavigate('shop')} className={`font-bold px-8 py-3 uppercase tracking-widest transition-colors ${theme.btnPrimary}`}>Back to Catalog</button>
-      </div>
-    );
-
-    return (
-      <div className="pt-24 px-4 max-w-7xl mx-auto min-h-screen pb-20">
-        <h2 className={`text-4xl font-black uppercase tracking-tighter mb-8 ${theme.text}`} style={{ fontFamily: "'Impact', sans-serif" }}>Secure Checkout</h2>
-        <div className="grid md:grid-cols-2 gap-12">
-          <form onSubmit={handlePlaceOrder} className="space-y-8">
-            <div className={`${theme.card} border ${theme.border} p-6`}>
-              <h3 className={`font-mono font-bold uppercase mb-4 border-b ${theme.border} pb-2 ${theme.accent}`}>1. Shipping Coordinates</h3>
-              <div className="space-y-4 font-mono text-sm">
-                <input required placeholder="FULL NAME" value={formData.name} onChange={e=>setFormData({...formData, name: e.target.value})} className={`w-full p-3 outline-none ${theme.input}`} />
-                <input required placeholder="PHONE NUMBER (10 DIGITS)" value={formData.phone} onChange={handlePhoneChange} className={`w-full p-3 outline-none ${theme.input}`} />
-                <input required placeholder="STREET ADDRESS & HOUSE NO." value={formData.address} onChange={e=>setFormData({...formData, address: e.target.value})} className={`w-full p-3 outline-none ${theme.input}`} />
-                <div className="grid grid-cols-3 gap-4">
-                  <div className="col-span-1 relative">
-                    <input required placeholder="PINCODE" value={formData.pin} onChange={handlePinChange} className={`w-full p-3 outline-none ${theme.input}`} />
-                    {fetchingCity && <Loader2 size={14} className={`absolute right-3 top-4 animate-spin ${theme.accent}`} />}
-                  </div>
-                  <input required placeholder="CITY" value={formData.city} onChange={e=>setFormData({...formData, city: e.target.value})} className={`col-span-1 w-full p-3 outline-none ${theme.input}`} />
-                  <input required placeholder="STATE" value={formData.state} onChange={e=>setFormData({...formData, state: e.target.value})} className={`col-span-1 w-full p-3 outline-none ${theme.input}`} />
-                </div>
-              </div>
-            </div>
-            <div className={`${theme.card} border ${theme.border} p-6`}>
-              <h3 className={`font-mono font-bold uppercase mb-4 border-b ${theme.border} pb-2 ${theme.accent}`}>2. Payment Protocol</h3>
-              <div className="space-y-3 font-mono text-sm">
-                {['UPI', 'CREDIT/DEBIT CARD', 'CASH ON DELIVERY'].map(mode => (
-                  <label key={mode} className={`flex items-center gap-3 p-4 border cursor-pointer transition-colors ${paymentMode === mode ? `border-[#8A2BE2] bg-[#8A2BE2]/10` : `${theme.border} hover:border-black/30`}`}>
-                    <input type="radio" name="payment" value={mode} checked={paymentMode === mode} onChange={(e) => setPaymentMode(e.target.value)} className="accent-[#8A2BE2]" />
-                    <span className={`uppercase font-bold ${theme.text}`}>{mode}</span>
-                  </label>
-                ))}
-              </div>
-            </div>
-            <button disabled={processing} type="submit" className={`w-full font-black py-5 uppercase tracking-widest text-lg disabled:opacity-50 flex justify-center items-center transition-colors ${theme.btnPrimary}`}>
-              {processing ? <Loader2 className="animate-spin" size={24} /> : `PLACE ORDER • ₹${cartTotal > freeShippingThreshold ? cartTotal : cartTotal + 150}`}
-            </button>
-          </form>
-
-          <div className={`${theme.card} border ${theme.border} p-6 h-fit sticky top-28`}>
-             <h3 className={`font-bold uppercase mb-6 border-b ${theme.border} pb-4 ${theme.text}`}>Order Summary</h3>
-             <div className="space-y-4 mb-6 max-h-64 overflow-y-auto pr-2">
-               {cart.map((item, idx) => (
-                 <div key={idx} className="flex gap-4">
-                   <img src={item.image} className={`w-16 h-20 object-cover grayscale border ${theme.border}`} />
-                   <div className="flex-1 flex flex-col justify-center">
-                     <p className={`text-xs font-bold uppercase ${theme.text}`}>{item.name}</p>
-                     <p className={`font-mono text-[10px] ${theme.textMuted}`}>QTY: 1</p>
-                     <p className={`font-mono text-xs mt-1 ${theme.accent}`}>₹{item.price}</p>
-                   </div>
-                 </div>
-               ))}
-             </div>
-             <div className={`border-t ${theme.border} pt-4 space-y-2 font-mono text-sm`}>
-               <div className={`flex justify-between ${theme.textMuted}`}><span>SUBTOTAL</span><span>₹{cartTotal}</span></div>
-               <div className={`flex justify-between ${theme.textMuted}`}><span>SHIPPING</span><span>{cartTotal > freeShippingThreshold ? 'FREE' : '₹150'}</span></div>
-               <div className={`flex justify-between font-bold text-lg pt-4 border-t ${theme.border} mt-2 ${theme.text}`}>
-                 <span>TOTAL</span><span className={theme.accent}>₹{cartTotal > freeShippingThreshold ? cartTotal : cartTotal + 150}</span>
-               </div>
-             </div>
-          </div>
-        </div>
-      </div>
-    );
-  };
-
-  // --- HELP & FAQ PAGE ---
-  const HelpCenter = () => {
-    const [ticketMsg, setTicketMsg] = useState('');
-    const [ticketSent, setTicketSent] = useState(false);
-    const [openFaq, setOpenFaq] = useState(null);
-
-    const faqs = [
-      { q: "Where is my order?", a: "Once your order is processed (usually 24 hours), you will receive a tracking link via SMS. Pan-India delivery takes 48-72 hours." },
-      { q: "Do you offer returns/exchanges?", a: "Yes, within 7 days of delivery. HOWEVER, an unedited unboxing video is strictly mandatory to process any claims for missing or damaged items." },
-      { q: "What does 'Heavyweight Cotton' mean?", a: "We use 240GSM to 400GSM cotton. It is significantly thicker, more durable, and drapes better than standard high-street clothing." },
-      { q: "Do you restock sold-out items?", a: "Rarely. Our drops are highly limited. Join the WhatsApp underground list to get notified if a vault re-opens." }
-    ];
-
-    const handleSubmitTicket = async (e) => {
-      e.preventDefault();
-      if(!ticketMsg.trim()) return;
-      try {
-        const ticketData = {
-          userEmail: user?.email ? user.email.replace('@cyber.net', '') : 'Anonymous',
-          message: ticketMsg,
-          status: 'OPEN',
-          createdAt: new Date().toISOString(),
-          reply: null
-        };
-        await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'tickets'), ticketData);
-        setTicketSent(true);
-        setTicketMsg('');
-      } catch (err) { alert("Failed to transmit. System error."); }
-    };
-
-    return (
-      <div className="pt-24 px-4 max-w-4xl mx-auto min-h-screen pb-20">
-        <h2 className={`text-4xl md:text-5xl font-black uppercase tracking-tighter mb-2 ${theme.text}`} style={{ fontFamily: "'Impact', sans-serif" }}>Help & Transmissions</h2>
-        <p className={`font-mono text-sm mb-12 ${theme.textMuted}`}>KNOWLEDGE BASE AND DIRECT COMM PROTOCOLS.</p>
-
-        <div className="grid md:grid-cols-2 gap-12 items-start">
-          <div>
-            <h3 className={`font-bold uppercase tracking-widest text-sm mb-6 ${theme.text} flex items-center gap-2`}><HelpCircle size={16}/> Frequency Asked</h3>
-            <div className="space-y-4">
-              {faqs.map((faq, i) => (
-                <div key={i} className={`border ${theme.border} ${theme.card}`}>
-                  <button onClick={() => setOpenFaq(openFaq === i ? null : i)} className={`w-full text-left p-4 font-mono font-bold text-sm uppercase flex justify-between items-center ${theme.text}`}>
-                    {faq.q} {openFaq === i ? <ChevronUp size={16}/> : <ChevronDown size={16}/>}
-                  </button>
-                  {openFaq === i && <div className={`p-4 pt-0 text-sm font-mono leading-relaxed ${theme.textMuted}`}>{faq.a}</div>}
-                </div>
-              ))}
-            </div>
-          </div>
-
-          <div className={`${theme.card} border ${theme.border} p-6`}>
-            <h3 className={`font-bold uppercase tracking-widest text-sm mb-6 ${theme.text} flex items-center gap-2`}><MessageSquare size={16}/> Direct Transmission</h3>
-            {ticketSent ? (
-              <div className="text-center py-8 animate-in fade-in">
-                <CheckCircle size={48} className={`mx-auto mb-4 ${theme.accent}`} />
-                <p className={`font-bold uppercase ${theme.text}`}>Message Received</p>
-                <p className={`font-mono text-xs mt-2 ${theme.textMuted}`}>Our operatives will review your transmission shortly.</p>
-                <button onClick={()=>setTicketSent(false)} className="mt-6 text-xs font-mono uppercase underline text-gray-500">Send Another</button>
-              </div>
-            ) : (
-              <form onSubmit={handleSubmitTicket} className="space-y-4 font-mono text-sm">
-                <p className={`text-xs ${theme.textMuted} mb-4`}>Submit a direct request to the admin terminal. Replies will be routed to your account.</p>
-                <textarea required value={ticketMsg} onChange={e=>setTicketMsg(e.target.value)} placeholder="Describe your issue or inquiry..." className={`w-full p-4 outline-none h-32 resize-none ${theme.input}`}></textarea>
-                <button type="submit" className={`w-full font-black py-4 uppercase tracking-widest transition-colors ${theme.btnPrimary}`}>Transmit Message</button>
-              </form>
-            )}
-          </div>
-        </div>
-      </div>
-    );
-  };
-
-  const ProductDetail = () => {
-    const [activeTab, setActiveTab] = useState('desc');
-    return (
-      <div className="pt-24 pb-32 md:pb-12 px-4 max-w-7xl mx-auto min-h-screen">
-         <button onClick={() => window.history.back()} className={`${theme.textMuted} hover:${theme.text} font-mono text-xs mb-8 flex items-center gap-2 uppercase tracking-widest transition-colors`}><ArrowLeft size={16} /> Back to Catalog</button>
-         <div className="grid md:grid-cols-2 gap-12 items-start">
-           <div className="space-y-4 md:sticky md:top-24">
-             <div className={`aspect-[4/5] ${theme.card} border ${theme.border} relative overflow-hidden group w-full`}>
-               <img src={selectedProduct.image} className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-105" alt={selectedProduct.name} />
-               {selectedProduct.badge && <div className={`absolute top-4 left-4 text-[10px] font-bold px-3 py-1 uppercase tracking-widest ${isLight ? 'bg-black text-white' : 'bg-[#CCFF00] text-black'}`}>{selectedProduct.badge}</div>}
-             </div>
-             <div className="grid grid-cols-3 gap-4 hidden md:grid">
-                {[1,2,3].map(i => (<div key={i} className={`aspect-square ${theme.card} border ${theme.border} cursor-pointer hover:border-gray-400 overflow-hidden`}><img src={selectedProduct.image} className="w-full h-full object-cover opacity-70 hover:opacity-100 transition-opacity" /></div>))}
-             </div>
-           </div>
-           <div className="flex flex-col">
-             <div className="mb-6 border-b border-gray-200 pb-6">
-               <div className="flex items-center gap-2 mb-3"><div className="flex text-[#8A2BE2] drop-shadow-sm">{[1,2,3,4,5].map(star => <Star key={star} size={14} fill="currentColor" />)}</div><span className={`text-xs font-mono ${theme.textMuted}`}>(128 Reviews)</span></div>
-               <h1 className={`text-4xl md:text-5xl font-black uppercase tracking-tighter mb-4 ${theme.text}`} style={{ fontFamily: "'Impact', sans-serif" }}>{selectedProduct.name}</h1>
-               <p className={`text-3xl font-mono ${isLight ? 'text-black font-extrabold' : 'text-[#E5E5E5]'}`}>₹{selectedProduct.price}</p>
-             </div>
-             <div className="mb-8">
-               <div className="flex justify-between items-center mb-4"><span className={`font-bold uppercase tracking-widest text-sm ${theme.text}`}>Select Size</span><button onClick={() => setShowSizeAI(true)} className="text-[#8A2BE2] flex items-center gap-2 font-mono text-xs hover:underline cursor-pointer"><Ruler size={14} /> Size Guide</button></div>
-               <div className="grid grid-cols-4 gap-4">{['S', 'M', 'L', 'XL'].map(s => <button key={s} className={`h-14 border font-mono text-lg transition-colors ${isLight ? 'border-black/20 text-black hover:border-black hover:bg-black/5 focus:border-black focus:bg-black focus:text-white' : 'border-white/20 text-white hover:border-[#CCFF00] hover:text-[#CCFF00] focus:border-[#CCFF00] focus:bg-[#CCFF00]/10'}`}>{s}</button>)}</div>
-             </div>
-             <div className="hidden md:flex gap-4 mb-10">
-               <button onClick={() => addToCart(selectedProduct)} className={`flex-1 font-black py-5 uppercase tracking-[0.2em] text-sm transition-colors ${theme.btnPrimary} relative overflow-hidden group`}><div className="absolute inset-0 bg-white/20 translate-y-full group-hover:translate-y-0 transition-transform duration-300 ease-in-out z-0"></div><span className="relative z-10 flex items-center justify-center gap-2"><ShoppingBag size={18} /> Add To Cart</span></button>
-               <button onClick={() => toggleWishlist(selectedProduct)} className={`w-16 flex items-center justify-center border transition-colors ${isLight ? 'border-black/20 text-black hover:border-black' : 'border-white/20 text-white hover:border-[#8A2BE2]'}`}><Heart fill={wishlist.find(i => i.id === selectedProduct.id) ? (isLight ? "#000" : "#8A2BE2") : "none"} /></button>
-             </div>
-             <div className="space-y-4">
-                <div className={`border ${theme.border} ${theme.card}`}>
-                   <button onClick={() => setActiveTab(activeTab === 'desc' ? '' : 'desc')} className="w-full flex justify-between items-center p-4 font-bold uppercase tracking-widest text-sm">Product Details {activeTab === 'desc' ? <ChevronUp size={16}/> : <ChevronDown size={16}/>}</button>
-                   {activeTab === 'desc' && <div className={`p-4 pt-0 text-sm font-mono leading-relaxed ${theme.textMuted}`}>{selectedProduct.description || "Forged for the urban dystopia. This piece features advanced construction and proprietary fabric blends."}<ul className="mt-4 space-y-2 text-xs"><li className="flex items-center gap-2"><div className="w-1 h-1 bg-[#8A2BE2] rounded-full"></div> 100% Premium Heavyweight Cotton</li><li className="flex items-center gap-2"><div className="w-1 h-1 bg-[#8A2BE2] rounded-full"></div> Oversized drop-shoulder fit</li></ul></div>}
-                </div>
-                <div className={`border ${theme.border} ${theme.card}`}>
-                   <button onClick={() => setActiveTab(activeTab === 'ship' ? '' : 'ship')} className="w-full flex justify-between items-center p-4 font-bold uppercase tracking-widest text-sm">Shipping & Returns {activeTab === 'ship' ? <ChevronUp size={16}/> : <ChevronDown size={16}/>}</button>
-                   {activeTab === 'ship' && <div className={`p-4 pt-0 text-xs font-mono space-y-3 ${theme.textMuted}`}><p className="flex items-center gap-2"><Truck size={14} className={theme.accent} /> Express Pan-India delivery within 48-72 hours.</p><p className="flex items-center gap-2"><RefreshCw size={14} className="text-[#8A2BE2]" /> 7-day returns. Mandatory unboxing video required.</p></div>}
-                </div>
-             </div>
-           </div>
-         </div>
-         <div className={`fixed bottom-0 left-0 right-0 p-4 ${isLight ? 'bg-white/90 border-black/10' : 'bg-black/90 border-white/10'} backdrop-blur-md border-t md:hidden z-40 transform transition-transform`}>
-            <div className="flex gap-2">
-              <button onClick={() => toggleWishlist(selectedProduct)} className={`w-14 flex items-center justify-center border transition-colors ${isLight ? 'border-black/20 text-black hover:border-black' : 'border-white/20 text-white hover:border-[#8A2BE2]'}`}><Heart fill={wishlist.find(i => i.id === selectedProduct.id) ? (isLight ? "#000" : "#8A2BE2") : "none"} /></button>
-              <button onClick={() => addToCart(selectedProduct)} className={`flex-1 font-black py-4 uppercase tracking-widest flex justify-center items-center gap-2 ${theme.btnPrimary}`}><ShoppingBag size={18} /> ₹{selectedProduct.price}</button>
-            </div>
-         </div>
-      </div>
-    );
-  };
-
-  const Shop = () => {
-    const [sortBy, setSortBy] = useState('recommended');
-    let filteredProducts = shopCategory === 'All Categories' ? products : products.filter(p => p.category === shopCategory);
-    if (sortBy === 'price-low') filteredProducts = [...filteredProducts].sort((a, b) => a.price - b.price);
-    else if (sortBy === 'price-high') filteredProducts = [...filteredProducts].sort((a, b) => b.price - a.price);
-
-    return (
-      <div className="pt-24 pb-20 px-4 max-w-7xl mx-auto min-h-screen">
-        <div className="mb-6 md:mb-8">
-          <div className="flex flex-col md:flex-row md:items-end justify-between gap-4 mb-6">
-            <div><h2 className={`text-3xl md:text-5xl font-black uppercase tracking-tighter ${theme.text}`} style={{ fontFamily: "'Impact', sans-serif" }}>{shopCategory === 'All Categories' ? 'The Collection' : shopCategory}</h2><p className={`font-mono text-xs mt-1 md:mt-2 uppercase tracking-widest ${theme.textMuted}`}>[{filteredProducts.length} Items Detected]</p></div>
-            <div className="flex flex-wrap items-center gap-2 md:gap-4">
-              <button onClick={() => setShowVibeMatcher(true)} className="flex-1 md:flex-none justify-center flex items-center gap-2 bg-[#8A2BE2]/10 text-[#8A2BE2] border border-[#8A2BE2]/30 px-4 py-2.5 font-mono text-xs uppercase hover:bg-[#8A2BE2] hover:text-white transition-all"><Sparkles size={14} /> AI Vibe Check</button>
-              <div className={`flex items-center border ${theme.border} px-3 py-2.5 flex-1 md:flex-none bg-transparent`}><span className={`text-[10px] uppercase font-bold mr-2 ${theme.textMuted}`}>Sort:</span><select value={sortBy} onChange={e => setSortBy(e.target.value)} className={`bg-transparent font-mono text-xs uppercase outline-none cursor-pointer ${theme.text} w-full`}><option value="recommended" className="bg-black text-white">Recommended</option><option value="price-high" className="bg-black text-white">Price: High to Low</option><option value="price-low" className="bg-black text-white">Price: Low to High</option></select></div>
-            </div>
-          </div>
-          <div className="flex gap-2 overflow-x-auto pb-2 scrollbar-hide">
-             {['All Categories', 'Outerwear', 'Tops', 'Bottoms', 'Hardware'].map(cat => (<button key={cat} onClick={() => setShopCategory(cat)} className={`whitespace-nowrap px-6 py-2.5 font-mono text-xs font-bold uppercase border transition-colors ${shopCategory === cat ? (isLight ? 'bg-black text-white border-black' : 'bg-[#CCFF00] text-black border-[#CCFF00]') : `border-${isLight?'black/10':'white/10'} ${theme.textMuted} hover:${theme.text} hover:border-${isLight?'black':'white'}`}`}>{cat}</button>))}
-          </div>
-        </div>
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 md:gap-6">
-        {filteredProducts.map(product => (
-          <div key={product.id} className="group cursor-pointer flex flex-col" onClick={() => openProduct(product)}>
-            <div className={`relative aspect-[3/4] ${theme.card} overflow-hidden border ${isLight ? 'border-black/5 group-hover:border-black/50' : 'border-white/5 group-hover:border-[#CCFF00]/50'} transition-colors mb-3`}>
-              <img src={product.image} alt={product.name} className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-105" />
-              {product.badge && <div className={`absolute top-2 left-2 md:top-4 md:left-4 text-[8px] md:text-[10px] font-bold px-2 py-1 uppercase mix-blend-screen ${isLight ? 'bg-black text-white' : 'bg-white text-black'}`}>{product.badge}</div>}
-              <div className="absolute inset-0 bg-[#8A2BE2] mix-blend-overlay opacity-0 group-hover:opacity-20 transition-opacity hidden md:block"></div>
-            </div>
-            <div className="flex flex-col flex-1"><h3 className={`font-bold uppercase tracking-tight text-[11px] md:text-sm mb-1 line-clamp-1 transition-colors ${theme.text} group-hover:text-[#8A2BE2]`}>{product.name}</h3><p className={`font-mono text-[9px] md:text-xs mb-2 ${theme.textMuted}`}>{product.category}</p><span className={`font-mono text-xs md:text-sm mt-auto ${isLight ? 'text-black font-extrabold' : 'text-[#E5E5E5] font-bold'}`}>₹{product.price}</span></div>
-          </div>
-        ))}
-        </div>
-      </div>
-    );
-  };
-
-  const Account = () => (
-    <div className="pt-24 px-4 max-w-4xl mx-auto min-h-screen">
-      <h2 className={`text-4xl font-black uppercase tracking-tighter mb-8 ${theme.text}`} style={{ fontFamily: "'Impact', sans-serif" }}>Command Center</h2>
-      <div className="grid md:grid-cols-3 gap-8">
-        <div className="col-span-1 space-y-4">
-          <div className={`${theme.card} border ${theme.border} p-6`}><div className={`w-16 h-16 rounded-full flex items-center justify-center font-black text-2xl mb-4 ${isLight ? 'bg-black text-white' : 'bg-[#CCFF00] text-black'}`}>{user?.email ? user.email.charAt(0).toUpperCase() : 'A'}</div><h3 className={`font-bold uppercase truncate ${theme.text}`}>{user?.email || 'Anonymous GUEST'}</h3><p className="text-[#8A2BE2] font-mono text-xs mt-1">TIER: {user?.isAnonymous ? 'GUEST' : 'UNDERGROUND INSIDER'}</p></div>
-          <div className={`${theme.card} border ${theme.border} p-6 space-y-3 font-mono text-sm`}><button className={`w-full text-left uppercase hover:underline ${theme.accent}`}>Order History</button><button className={`w-full text-left uppercase ${theme.textMuted} hover:${theme.text}`}>Saved Addresses</button><button className={`w-full text-left uppercase ${theme.textMuted} hover:${theme.text}`}>Settings</button><button onClick={() => signOut(auth).then(()=>handleNavigate('home'))} className={`w-full text-left text-red-500 uppercase hover:text-red-400 mt-4 pt-4 border-t ${theme.border}`}>Logout</button></div>
-        </div>
-        <div className={`col-span-2 ${theme.card} border ${theme.border} p-6`}><h3 className={`font-bold uppercase mb-6 border-b ${theme.border} pb-4 ${theme.text}`}>Recent Orders</h3><div className="text-center py-12"><p className={`font-mono text-sm ${theme.textMuted}`}>CHECKOUT HISTORY CAN BE VIEWED BY SYSTEM ADMIN.</p><button onClick={() => handleNavigate('shop')} className={`mt-4 font-mono text-xs uppercase hover:underline ${theme.accent}`}>Enter Shop</button></div></div>
+          </>
+        )}
       </div>
     </div>
   );
+};
 
-  const AdminPanel = () => {
-    const [adminView, setAdminView] = useState('dashboard');
-    const [orders, setOrders] = useState([]);
-    const [tickets, setTickets] = useState([]);
-    const [crmSearch, setCrmSearch] = useState('');
-    const [promos, setPromos] = useState([{ code: 'NEON20', discount: '20% OFF', usage: '142 / 500', status: 'Active' }]);
-    
-    useEffect(() => {
-      const authenticateAndFetch = async () => {
-        try {
-          if (!user) await signInAnonymously(auth);
-          onSnapshot(query(collection(db, 'artifacts', appId, 'public', 'data', 'orders')), (snap) => {
-            const loaded = snap.docs.map(doc => ({ id: doc.id, ...doc.data() })).sort((a,b) => new Date(b.createdAt) - new Date(a.createdAt)); 
-            setOrders(loaded);
-          });
-          onSnapshot(query(collection(db, 'artifacts', appId, 'public', 'data', 'tickets')), (snap) => {
-            const loadedT = snap.docs.map(doc => ({ id: doc.id, ...doc.data() })).sort((a,b) => new Date(b.createdAt) - new Date(a.createdAt)); 
-            setTickets(loadedT);
-          });
-        } catch (authErr) { console.error("Admin Auth Error", authErr); }
-      }
-      authenticateAndFetch();
-    }, [user]);
-
-    const handleReplyTicket = async (ticketId) => {
-      const reply = prompt("Enter your reply to the user. This will mark the ticket as resolved.");
-      if(reply) {
-        try { await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'tickets', ticketId), { status: 'RESOLVED', reply: reply }); } catch(e){}
-      }
-    };
-
-    const DronaTabs = [
-      { id: 'dashboard', icon: LayoutDashboard, label: 'Analytics Dashboard' },
-      { id: 'orders', icon: Package, label: 'Fulfillment Tracking' },
-      { id: 'products', icon: Box, label: 'Product & Catalog' },
-      { id: 'tickets', icon: MessageSquare, label: 'Support Inbox' },
-      { id: 'crm', icon: Users, label: 'Customer Relations' },
-      { id: 'marketing', icon: Tag, label: 'Marketing & Promos' },
-    ];
-
-    const totalRevenue = orders.reduce((sum, o) => sum + o.total, 0);
-
-    return (
-      <div className="min-h-screen bg-[#050505] text-[#E5E5E5] flex flex-col md:flex-row cursor-default font-mono selection:bg-[#CCFF00] selection:text-black">
-        <div className="w-full md:w-72 bg-[#0A0A0A] border-r border-[#333] flex flex-col h-screen sticky top-0">
-          <div className="p-6 border-b border-[#333] flex items-center justify-between bg-black"><div><h1 className="text-2xl font-black uppercase text-[#CCFF00]" style={{ fontFamily: "'Impact', sans-serif" }}>SYS.ADMIN</h1><p className="text-[10px] text-[#8A2BE2] mt-1">DRONA_HQ SECURE PROTOCOL</p></div><button onClick={() => handleNavigate('home')} className="text-gray-500 hover:text-white p-2 border border-[#333] bg-[#0A0A0A]"><X size={14} /></button></div>
-          <div className="p-4 space-y-1 flex-1 overflow-y-auto">
-            {DronaTabs.map(item => (
-              <button key={item.id} onClick={() => setAdminView(item.id)} className={`w-full flex items-center justify-between px-4 py-3 uppercase text-xs font-bold border transition-colors ${adminView === item.id ? 'bg-[#CCFF00]/10 border-[#CCFF00] text-[#CCFF00]' : 'border-transparent text-gray-500 hover:text-white hover:bg-white/5 hover:border-[#333]'}`}>
-                <div className="flex items-center gap-3"><item.icon size={14} /> {item.label}</div>
-                {item.id === 'tickets' && tickets.filter(t=>t.status==='OPEN').length > 0 && <span className="bg-red-500 text-white px-2 py-0.5 rounded-full text-[10px]">{tickets.filter(t=>t.status==='OPEN').length}</span>}
+const VibeMatcher = ({ appState }) => {
+  const { theme, isLight, setShowVibeMatcher, products, addToCart } = appState;
+  const [scenario, setScenario] = useState(''); const [loading, setLoading] = useState(false); const [recommendations, setRecommendations] = useState(null);
+  const handleMatch = async () => {
+    if (!scenario) return; setLoading(true);
+    try {
+      const catalogContext = products.map(p => `{id: ${p.id}, name: "${p.name}"}`).join(', ');
+      const jsonText = await callGeminiAPI(`Scenario: "${scenario}". Pick 2 exact products matching vibe: [${catalogContext}].`, { type: "OBJECT", properties: { items: { type: "ARRAY", items: { type: "INTEGER" } }, reasoning: { type: "STRING" } }, required: ["items", "reasoning"] });
+      const data = JSON.parse(jsonText);
+      setRecommendations({ products: data.items.map(id => products.find(p => p.id === id)).filter(Boolean), reasoning: data.reasoning });
+    } catch (err) { setRecommendations({ error: "NEURAL LINK SEVERED. TRY AGAIN." }); } finally { setLoading(false); }
+  };
+  return (
+    <div className="fixed inset-0 z-[70] bg-black/90 flex items-center justify-center p-4 backdrop-blur-sm">
+      <div className={`${isLight ? 'bg-white' : 'bg-[#0A0A0A]'} border border-[#8A2BE2]/50 w-full max-w-2xl p-6 relative`}>
+        <button onClick={() => setShowVibeMatcher(false)} className={`absolute top-4 right-4 ${theme.textMuted} hover:${theme.text}`}><X size={20} /></button>
+        <div className="flex items-center gap-2 mb-2"><Sparkles className="text-[#8A2BE2]" /><h3 className={`text-2xl font-black uppercase tracking-wider ${theme.text}`} style={{ fontFamily: "'Impact', sans-serif" }}>AI Vibe Matcher</h3></div>
+        <p className={`font-mono text-xs mb-6 ${theme.textMuted}`}>DESCRIBE YOUR DESTINATION. THE NEURAL NET WILL FORGE YOUR OUTFIT.</p>
+        {!recommendations ? (
+          <div className="space-y-4 font-mono">
+             <textarea value={scenario} onChange={e => setScenario(e.target.value)} placeholder="e.g., Underground techno rave in Berlin..." className={`w-full p-4 outline-none h-32 resize-none transition-colors ${theme.input}`} />
+             <button onClick={handleMatch} disabled={loading || !scenario} className={`w-full font-bold py-4 uppercase transition-colors disabled:opacity-50 flex justify-center items-center gap-2 ${theme.btnPrimary}`}>
+                {loading ? <Loader2 className="animate-spin" size={18} /> : <Zap size={18} />}{loading ? "SCANNING CATALOG..." : "✨ GENERATE FIT"}
               </button>
-            ))}
           </div>
-          <div className="p-4 border-t border-[#333] bg-black"><div className="flex items-center gap-3"><div className="w-8 h-8 rounded bg-[#8A2BE2] flex items-center justify-center font-bold text-white text-xs">AD</div><div><p className="text-xs font-bold text-white">MASTER ADMIN</p><p className="text-[10px] text-green-500 flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-green-500 inline-block animate-pulse"></span> ONLINE</p></div></div></div>
+        ) : recommendations.error ? ( <p className="text-red-500 font-mono text-center py-8">{recommendations.error}</p> ) : (
+          <div className="animate-in fade-in duration-500">
+             <div className={`p-4 border-l-4 border-[#8A2BE2] bg-[#8A2BE2]/10 mb-6 font-mono text-sm italic ${theme.text}`}>"{recommendations.reasoning}"</div>
+             <div className="grid grid-cols-2 gap-4 mb-6">
+               {recommendations.products.map((p, idx) => (
+                 p ? <div key={p.id || idx} className={`border p-2 flex gap-3 ${theme.border} ${theme.card}`}><img src={p.image} className="w-16 h-20 object-cover grayscale" /><div className="flex flex-col justify-center"><p className={`font-bold text-xs uppercase ${theme.text}`}>{p.name}</p><p className={`font-mono text-xs mt-1 ${theme.accent}`}>₹{p.price}</p><button onClick={() => addToCart(p)} className="text-left text-[#8A2BE2] text-[10px] font-mono uppercase mt-2 hover:underline">+ Add to Cart</button></div></div> : null
+               ))}
+             </div>
+             <button onClick={() => setRecommendations(null)} className={`w-full border font-bold py-3 uppercase font-mono text-sm transition-colors ${theme.border} ${theme.text} hover:bg-gray-200`}>Reset Vibe</button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
+const Navbar = ({ appState }) => {
+  const { view, theme, isLight, handleNavigate, isMobileMenuOpen, setIsMobileMenuOpen, setShopCategory, user, wishlist, setIsCartOpen, cart } = appState;
+  if (view === 'admin' || view === 'profile-setup') return null;
+  return (
+    <nav className={`fixed top-0 w-full z-50 ${isLight ? 'bg-white/90 border-black/10' : 'bg-[#050505]/80 border-white/10'} backdrop-blur-lg border-b transition-colors duration-1000`}>
+      <div className="max-w-7xl mx-auto px-4 h-20 flex items-center justify-between">
+        <div className="flex items-center gap-4">
+          <Menu className={`md:hidden cursor-pointer ${isLight ? 'text-black hover:text-[#8A2BE2]' : 'text-white hover:text-[#CCFF00]'}`} onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)} />
+          <div onClick={() => handleNavigate('home')} className="cursor-pointer relative z-50 flex items-center group">
+            <img src="451404688_834030975111165_2058569119566201452_n.jpg" alt="Darkside" className="h-14 md:h-16 object-contain group-hover:scale-105 transition-transform" style={{ filter: isLight ? 'invert(1)' : 'contrast(1.4) brightness(1.1)', mixBlendMode: isLight ? 'normal' : 'screen' }} onError={(e) => { e.target.onerror = null; e.target.src = `https://placehold.co/400x150/${isLight ? 'FFFFFF' : '050505'}/${isLight ? '000000' : 'CCFF00'}?text=YOUR+LOGO+HERE`; e.target.style.filter = "none"; e.target.style.mixBlendMode = "normal"; }} />
+            <h1 className={`hidden text-3xl font-black tracking-tighter cursor-pointer uppercase glitch-hover ${isLight ? 'text-black' : 'text-white'}`} style={{ fontFamily: "'Impact', sans-serif" }}>DARK<span className={isLight ? 'text-[#8A2BE2]' : 'text-[#CCFF00]'}>SIDE</span></h1>
+          </div>
         </div>
-
-        <div className="flex-1 p-4 md:p-8 h-screen overflow-y-auto bg-[url('https://www.transparenttextures.com/patterns/cubes.png')] bg-repeat">
-          <div className="max-w-6xl mx-auto">
-            {adminView === 'dashboard' && (
-              <div className="animate-in fade-in">
-                <div className="flex justify-between items-end mb-8 border-b border-[#333] pb-4"><div><h2 className="text-2xl font-black uppercase text-white">Analytics Dashboard</h2><p className="text-xs text-gray-500 mt-1">Real-time visualization of key metrics</p></div><button onClick={() => window.print()} className="bg-[#CCFF00] text-black text-xs font-bold px-4 py-2 uppercase hover:bg-white transition-colors">Export PDF Report</button></div>
-                <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
-                  <div className="bg-[#0A0A0A] border border-[#333] p-5"><p className="text-[10px] text-gray-500 mb-2 uppercase">Gross Revenue</p><p className="text-3xl text-[#CCFF00]">₹{totalRevenue}</p></div>
-                  <div className="bg-[#0A0A0A] border border-[#333] p-5"><p className="text-[10px] text-gray-500 mb-2 uppercase">Order Volume</p><p className="text-3xl text-white">{orders.length}</p></div>
-                  <div className="bg-[#0A0A0A] border border-[#333] p-5"><p className="text-[10px] text-gray-500 mb-2 uppercase">Open Tickets</p><p className="text-3xl text-red-500">{tickets.filter(t=>t.status==='OPEN').length}</p></div>
-                  <div className="bg-[#0A0A0A] border border-[#333] p-5"><p className="text-[10px] text-gray-500 mb-2 uppercase">Cart Abandonment</p><p className="text-3xl text-white">64%</p></div>
-                </div>
-              </div>
-            )}
-
-            {adminView === 'tickets' && (
-              <div className="animate-in fade-in">
-                <div className="flex justify-between items-end mb-8 border-b border-[#333] pb-4"><div><h2 className="text-2xl font-black uppercase text-white">Support Inbox</h2><p className="text-xs text-gray-500 mt-1">Resolve incoming transmissions</p></div></div>
-                <div className="space-y-4">
-                   {tickets.map(t => (
-                     <div key={t.id} className="bg-[#0A0A0A] border border-[#333] p-6">
-                        <div className="flex justify-between items-start mb-4">
-                           <div><span className="text-white font-bold">{t.userEmail}</span><span className="text-gray-500 text-[10px] ml-4">{new Date(t.createdAt).toLocaleString()}</span></div>
-                           <span className={`text-[10px] font-bold px-2 py-1 uppercase ${t.status==='OPEN' ? 'bg-red-500/20 text-red-500' : 'bg-green-500/20 text-green-500'}`}>{t.status}</span>
-                        </div>
-                        <p className="text-sm text-gray-300 mb-4 pb-4 border-b border-[#333]">"{t.message}"</p>
-                        {t.status === 'OPEN' ? (
-                           <button onClick={()=>handleReplyTicket(t.id)} className="text-[#8A2BE2] text-xs font-bold uppercase hover:underline flex items-center gap-2"><MessageSquare size={14}/> Reply & Resolve</button>
-                        ) : (
-                           <div className="text-xs text-gray-500"><span className="text-[#CCFF00] font-bold">ADMIN REPLY:</span> {t.reply}</div>
-                        )}
-                     </div>
-                   ))}
-                   {tickets.length === 0 && <p className="text-center text-gray-500 py-8">NO INCOMING TRANSMISSIONS.</p>}
-                </div>
-              </div>
-            )}
-
-            {adminView === 'orders' && (<div className="animate-in fade-in"><h2 className="text-2xl font-black uppercase text-white mb-8 border-b border-[#333] pb-4">Fulfillment Tracking</h2><div className="bg-[#0A0A0A] border border-[#333] overflow-x-auto"><table className="w-full text-left text-xs whitespace-nowrap"><thead className="bg-[#111] text-gray-400 uppercase"><tr><th className="p-4 border-b border-[#333]">ID</th><th className="p-4 border-b border-[#333]">Customer</th><th className="p-4 border-b border-[#333]">Value</th><th className="p-4 border-b border-[#333]">Status</th></tr></thead><tbody className="text-gray-300">{orders.map(o=><tr key={o.id} className="border-b border-[#333]"><td className="p-4">#{o.id.slice(0,8)}</td><td className="p-4">{o.userEmail}</td><td className="p-4 text-[#CCFF00]">₹{o.total}</td><td className="p-4">{o.status}</td></tr>)}</tbody></table></div></div>)}
-            
-            {adminView === 'products' && (<div className="animate-in fade-in"><h2 className="text-2xl font-black uppercase text-white mb-8 border-b border-[#333] pb-4">Product Catalog</h2><div className="grid grid-cols-2 md:grid-cols-4 gap-4">{products.map(p=><div key={p.id} className="bg-[#0A0A0A] border border-[#333] p-4"><img src={p.image} className="w-full h-32 object-cover mb-2"/><p className="text-xs text-white font-bold truncate">{p.name}</p><p className="text-[#CCFF00] text-xs">₹{p.price}</p></div>)}</div></div>)}
+        <div className="hidden md:flex items-center space-x-8">
+          {['Tees', 'Hoodies', 'Cargos'].map(link => (
+            <button key={link} onClick={() => { setShopCategory(link === 'Tees' ? 'Tops' : link === 'Hoodies' ? 'Outerwear' : 'Bottoms'); handleNavigate('shop'); }} className={`text-sm font-mono uppercase tracking-widest transition-colors magnetic ${isLight ? 'text-gray-600 hover:text-black' : 'text-[#E5E5E5] hover:text-[#CCFF00]'}`}>{link}</button>
+          ))}
+        </div>
+        <div className="flex items-center gap-5 md:gap-6">
+          <Search className={`cursor-pointer hidden md:block w-5 h-5 ${theme.text} ${theme.accentHover}`} onClick={() => handleNavigate('shop')} />
+          <div className="cursor-pointer" onClick={() => handleNavigate(user && !user.isAnonymous ? 'account' : 'auth')}>
+            {user && user.photoURL ? ( <img src={user.photoURL} alt="Profile" className="w-6 h-6 rounded-full border border-gray-500 object-cover" /> ) : ( <User className={`w-5 h-5 ${theme.text} ${theme.accentHover}`} /> )}
+          </div>
+          <div className="relative cursor-pointer hidden md:block" onClick={() => handleNavigate('vault')}>
+            <Heart className={`w-5 h-5 ${theme.text} hover:text-[#8A2BE2]`} />
+            {wishlist.length > 0 && <span className="absolute -top-2 -right-2 w-4 h-4 bg-[#8A2BE2] text-white text-[10px] font-bold flex items-center justify-center rounded-full">{wishlist.length}</span>}
+          </div>
+          <div className="relative cursor-pointer" onClick={() => { setIsCartOpen(true); setIsMobileMenuOpen(false); }}>
+            <ShoppingBag className={`w-5 h-5 ${theme.text} hover:text-[#8A2BE2]`} />
+            {cart.length > 0 && <span className={`absolute -top-2 -right-2 w-4 h-4 ${isLight ? 'bg-black text-white' : 'bg-[#CCFF00] text-black'} text-[10px] font-bold flex items-center justify-center rounded-full`}>{cart.length}</span>}
           </div>
         </div>
       </div>
-    );
-  };
-  
-  const LogOut = ({size}) => <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path><polyline points="16 17 21 12 16 7"></polyline><line x1="21" y1="12" x2="9" y2="12"></line></svg>;
+      {isMobileMenuOpen && (
+        <div className={`md:hidden border-b p-4 flex flex-col gap-4 absolute top-20 left-0 w-full z-40 ${isLight ? 'bg-white border-black/10' : 'bg-[#0A0A0A] border-white/10'}`}>
+          {['Home', 'Shop', 'Vault', 'Help & FAQs', user && !user.isAnonymous ? 'Account' : 'Login'].map(link => (
+            <button key={link} onClick={() => { 
+                if(link === 'Help & FAQs') handleNavigate('help');
+                else if(link === 'Login') handleNavigate('auth');
+                else { setShopCategory('All Categories'); handleNavigate(link.toLowerCase()); }
+            }} className={`text-left font-mono uppercase py-2 border-b ${isLight ? 'text-black border-black/5 hover:text-[#8A2BE2]' : 'text-white border-white/5 hover:text-[#CCFF00]'}`}>{link}</button>
+          ))}
+        </div>
+      )}
+    </nav>
+  );
+};
 
-  const Home = () => (
+const AuthView = ({ appState }) => {
+  const { theme, isLight, handleNavigate } = appState;
+  const [authMode, setAuthMode] = useState('phone'); 
+  const [phone, setPhone] = useState('');
+  const [otpSent, setOtpSent] = useState(false);
+  const [otp, setOtp] = useState('');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [isSignup, setIsSignup] = useState(false);
+  const [error, setError] = useState(''); 
+  const [loading, setLoading] = useState(false);
+  
+  const handlePhoneChange = (e) => {
+    const val = e.target.value.replace(/\D/g, '');
+    if (val.length <= 10) setPhone(val);
+  };
+
+  const navigateAfterAuth = (userObj) => {
+    if (!userObj.displayName) {
+      handleNavigate('profile-setup');
+    } else {
+      handleNavigate('account');
+    }
+  };
+
+  const handleSendOTP = async (e) => {
+    e.preventDefault();
+    if (phone.length !== 10) return setError("IDENTIFIER FAILED: Must be exactly 10 digits.");
+    setError(''); setLoading(true);
+    try {
+      if (!window.recaptchaVerifier) { window.recaptchaVerifier = new RecaptchaVerifier(auth, 'recaptcha-container', { 'size': 'invisible' }); }
+      const formatPhone = "+91" + phone;
+      const confirmationResult = await signInWithPhoneNumber(auth, formatPhone, window.recaptchaVerifier);
+      window.confirmationResult = confirmationResult;
+      setOtpSent(true);
+    } catch (err) {
+      console.error("SMS Error", err);
+      if (err.code === 'auth/billing-not-enabled') setError("SMS FAILED: Firebase Billing (Blaze Plan) is required. Add your number to 'Testing Numbers' in Firebase Console to bypass.");
+      else setError(`SMS FAILED: ${err.message}`);
+      if (window.recaptchaVerifier) { window.recaptchaVerifier.clear(); window.recaptchaVerifier = null; }
+    } finally { setLoading(false); }
+  };
+
+  const handleVerifyOTP = async (e) => {
+    e.preventDefault();
+    if (otp.length !== 6) return setError("INVALID OTP FORMAT.");
+    setError(''); setLoading(true);
+    try { 
+      const result = await window.confirmationResult.confirm(otp);
+      navigateAfterAuth(result.user);
+    } catch (err) { setError("INVALID OTP. ACCESS DENIED."); } finally { setLoading(false); }
+  };
+
+  const handleEmailAuth = async (e) => {
+    e.preventDefault();
+    setError(''); setLoading(true);
+    if (email === 'admin@darkside.com' && password === 'darkside') {
+       setTimeout(() => { setLoading(false); handleNavigate('admin'); }, 800);
+       return;
+    }
+    try { 
+      const result = isSignup ? await createUserWithEmailAndPassword(auth, email, password) : await signInWithEmailAndPassword(auth, email, password); 
+      navigateAfterAuth(result.user);
+    } catch (err) { setError(err.message); } finally { setLoading(false); } 
+  };
+
+  return (
+    <div className="pt-32 px-4 max-w-md mx-auto min-h-screen">
+      <div className={`${theme.card} border ${theme.border} p-8 relative overflow-hidden`}>
+        <h2 className={`text-4xl font-black uppercase tracking-tighter mb-2 ${theme.text}`} style={{ fontFamily: "'Impact', sans-serif" }}>Join The Syndicate</h2>
+        <p className={`font-mono text-xs mb-8 ${theme.textMuted}`}>AUTHENTICATE VIA SECURE TERMINAL.</p>
+        {error && <p className="text-red-500 font-mono text-xs mb-4 p-2 bg-red-500/10 border border-red-500/30 flex items-center gap-2"><AlertOctagon size={14}/> {error}</p>}
+        <div id="recaptcha-container"></div>
+        {authMode === 'phone' && (
+          !otpSent ? (
+            <form onSubmit={handleSendOTP} className="space-y-4 font-mono text-sm">
+              <div><label className={`block mb-1 font-bold ${theme.accent}`}>PHONE NUMBER (10 DIGITS)</label><div className="flex items-center"><span className={`p-3 border border-r-0 ${isLight ? 'bg-gray-200 border-black/20 text-gray-500' : 'bg-gray-900 border-white/20 text-gray-500'}`}>+91</span><input type="text" value={phone} onChange={handlePhoneChange} placeholder="9999999999" required className={`w-full p-3 outline-none ${theme.input}`} /></div></div>
+              <button disabled={loading || phone.length !== 10} type="submit" className={`w-full font-black py-4 mt-4 uppercase tracking-widest disabled:opacity-50 flex justify-center items-center gap-2 ${theme.btnPrimary}`}>{loading ? <Loader2 className="animate-spin" size={18} /> : <Smartphone size={18} />} GET OTP</button>
+              <button type="button" onClick={() => setAuthMode('email')} className={`w-full text-center text-xs mt-4 hover:underline ${theme.textMuted} flex justify-center items-center gap-1`}><Mail size={12}/> Switch to Email Login</button>
+            </form>
+          ) : (
+            <form onSubmit={handleVerifyOTP} className="space-y-4 font-mono text-sm animate-in fade-in">
+              <div className={`p-3 text-xs mb-4 border ${isLight ? 'bg-green-100 border-green-500 text-green-700' : 'bg-green-900/30 border-green-500 text-green-400'}`}>OTP successfully dispatched to +91 {phone}.</div>
+              <div><label className={`block mb-1 font-bold ${theme.accent}`}>ENTER 6-DIGIT OTP</label><input type="text" maxLength={6} value={otp} onChange={(e) => setOtp(e.target.value.replace(/\D/g, ''))} placeholder="• • • • • •" required className={`w-full p-3 tracking-[1em] text-center font-bold text-xl outline-none ${theme.input}`} /></div>
+              <button disabled={loading || otp.length !== 6} type="submit" className={`w-full font-black py-4 mt-4 uppercase tracking-widest disabled:opacity-50 flex justify-center items-center gap-2 ${theme.btnPrimary}`}>{loading ? <Loader2 className="animate-spin" size={18} /> : <Fingerprint size={18} />} VERIFY & ENTER</button>
+              <button type="button" onClick={() => setOtpSent(false)} className={`w-full text-center text-xs mt-2 hover:underline ${theme.textMuted}`}>Change Phone Number</button>
+            </form>
+          )
+        )}
+        {authMode === 'email' && (
+          <form onSubmit={handleEmailAuth} className="space-y-4 font-mono text-sm animate-in fade-in">
+            <div><label className={`block mb-1 font-bold ${theme.accent}`}>EMAIL IDENTIFIER</label><input type="email" value={email} onChange={e=>setEmail(e.target.value)} required className={`w-full p-3 outline-none ${theme.input}`} /></div>
+            <div><label className={`block mb-1 font-bold ${theme.accent}`}>PASSCODE</label><input type="password" value={password} onChange={e=>setPassword(e.target.value)} required className={`w-full p-3 outline-none ${theme.input}`} /></div>
+            <button disabled={loading} type="submit" className={`w-full font-black py-4 mt-4 uppercase tracking-widest disabled:opacity-50 flex justify-center items-center gap-2 ${theme.btnPrimary}`}>{loading ? <Loader2 className="animate-spin" size={18} /> : (isSignup ? "Create Identity" : "Initialize Login")}</button>
+            <div className="flex justify-between items-center mt-4"><button type="button" onClick={() => setIsSignup(!isSignup)} className={`text-xs hover:underline ${theme.textMuted}`}>{isSignup ? "Have an account?" : "Need an account?"}</button><button type="button" onClick={() => setAuthMode('phone')} className={`text-xs hover:underline ${theme.textMuted} flex items-center gap-1`}><Smartphone size={12}/> Use Phone</button></div>
+          </form>
+        )}
+      </div>
+    </div>
+  );
+};
+
+const ProfileSetup = ({ appState }) => {
+  const { handleNavigate, setUser } = appState;
+  const [name, setName] = useState('');
+  const [avatarUrl, setAvatarUrl] = useState('');
+  const [loading, setLoading] = useState(false);
+
+  const handleSaveProfile = async (e) => {
+    e.preventDefault();
+    if (!name.trim()) return;
+    setLoading(true);
+    try {
+      await updateProfile(auth.currentUser, { displayName: name, photoURL: avatarUrl });
+      setUser({...auth.currentUser, displayName: name, photoURL: avatarUrl});
+      handleNavigate('account');
+    } catch (err) { console.error(err); alert("Failed to update profile."); } finally { setLoading(false); }
+  };
+
+  return (
+    <div className="min-h-screen bg-[#050505] text-[#E5E5E5] flex items-center justify-center p-4">
+      <div className="w-full max-w-lg bg-[#0A0A0A] border border-[#333] p-8">
+        <h2 className="text-3xl font-black uppercase tracking-tighter mb-2 text-white" style={{ fontFamily: "'Impact', sans-serif" }}>Identify Yourself</h2>
+        <p className="font-mono text-xs mb-8 text-gray-400">COMPLETE YOUR PROFILE PROJECTION TO CONTINUE.</p>
+        <form onSubmit={handleSaveProfile} className="space-y-6 font-mono text-sm">
+          <div><label className="block mb-2 font-bold text-[#CCFF00]">OPERATIVE NAME *</label><input type="text" required value={name} onChange={e=>setName(e.target.value)} placeholder="Enter your display name..." className="w-full p-4 bg-black border border-[#333] text-white focus:border-[#CCFF00] outline-none" /></div>
+          <div>
+             <label className="block mb-2 font-bold text-[#CCFF00]">AVATAR PROJECTION (OPTIONAL)</label>
+             <div className="grid grid-cols-4 gap-2 mb-4">
+               {AVATAR_PRESETS.map((url, i) => (<div key={i} onClick={() => setAvatarUrl(url)} className={`cursor-pointer aspect-square border-2 overflow-hidden ${avatarUrl === url ? 'border-[#CCFF00]' : 'border-transparent opacity-50 hover:opacity-100'}`}><img src={url} alt={`preset-${i}`} className="w-full h-full object-cover grayscale hover:grayscale-0 transition-all" /></div>))}
+             </div>
+             <input type="url" value={avatarUrl} onChange={e=>setAvatarUrl(e.target.value)} placeholder="Or paste a custom image URL..." className="w-full p-3 bg-black border border-[#333] text-white text-xs focus:border-[#CCFF00] outline-none" />
+          </div>
+          <button disabled={loading || !name.trim()} type="submit" className="w-full bg-[#CCFF00] text-black font-black py-4 uppercase tracking-widest disabled:opacity-50 hover:bg-white transition-colors">{loading ? <Loader2 className="animate-spin mx-auto" size={20} /> : "Save & Enter Nexus"}</button>
+          <button type="button" onClick={() => handleNavigate('account')} className="w-full text-center text-xs text-gray-500 hover:text-white uppercase tracking-widest">Skip for now</button>
+        </form>
+      </div>
+    </div>
+  );
+};
+
+const Account = ({ appState }) => {
+  const { theme, isLight, user, setUser, handleNavigate } = appState;
+  const [activeTab, setActiveTab] = useState('orders');
+  const [myOrders, setMyOrders] = useState([]);
+  const [addrForm, setAddrForm] = useState({ address: '', city: '', state: '', pin: '' });
+  const [savedAddr, setSavedAddr] = useState(null);
+  const [updateName, setUpdateName] = useState(user?.displayName || '');
+  const [updateAvatar, setUpdateAvatar] = useState(user?.photoURL || '');
+
+  useEffect(() => {
+    let unsubOrders;
+    if (user && activeTab === 'orders') {
+      unsubOrders = onSnapshot(query(collection(db, 'artifacts', appId, 'public', 'data', 'orders')), (snap) => {
+         const allOrders = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+         const userOrders = allOrders.filter(o => o.userId === user.uid).sort((a,b) => new Date(b.createdAt) - new Date(a.createdAt));
+         setMyOrders(userOrders);
+      }, (err) => console.error("Account orders fetch error:", err));
+    }
+    if (user) {
+      getDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'userdata', 'state')).then(docSnap => {
+         if (docSnap.exists() && docSnap.data().savedAddress) { setSavedAddr(docSnap.data().savedAddress); setAddrForm(docSnap.data().savedAddress); }
+      }).catch(err => console.error(err));
+    }
+    return () => { if(unsubOrders) unsubOrders(); };
+  }, [user, activeTab]);
+
+  const handleSaveAddress = async (e) => {
+    e.preventDefault();
+    try { await setDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'userdata', 'state'), { savedAddress: addrForm }, { merge: true }); setSavedAddr(addrForm); alert("Coordinates Saved."); } catch (err) { alert("Failed to save address."); }
+  };
+
+  const handleUpdateProfile = async (e) => {
+    e.preventDefault();
+    if(!updateName) return;
+    try { await updateProfile(auth.currentUser, { displayName: updateName, photoURL: updateAvatar }); setUser({...auth.currentUser, displayName: updateName, photoURL: updateAvatar}); alert("Profile Update Complete."); } catch(err) { alert("Update Failed."); }
+  };
+
+  return (
+    <div className="pt-24 px-4 max-w-6xl mx-auto min-h-screen pb-20">
+      <h2 className={`text-4xl md:text-5xl font-black uppercase tracking-tighter mb-8 ${theme.text}`} style={{ fontFamily: "'Impact', sans-serif" }}>Command Center</h2>
+      <div className="grid md:grid-cols-4 gap-8 items-start">
+        <div className="col-span-1 space-y-4 sticky top-24">
+          <div className={`${theme.card} border ${theme.border} p-6 flex flex-col items-center text-center`}>
+            {user?.photoURL ? (<img src={user.photoURL} alt="Profile" className={`w-24 h-24 rounded-full object-cover mb-4 border-2 ${theme.border}`} />) : (<div className={`w-24 h-24 rounded-full flex items-center justify-center font-black text-4xl mb-4 ${isLight ? 'bg-black text-white' : 'bg-[#CCFF00] text-black'}`}>{user?.displayName ? user.displayName.charAt(0).toUpperCase() : (user?.email ? user.email.charAt(0).toUpperCase() : 'A')}</div>)}
+            <h3 className={`font-bold uppercase truncate w-full ${theme.text}`}>{user?.displayName || 'OPERATIVE'}</h3>
+            <p className={`font-mono text-[10px] w-full truncate ${theme.textMuted}`}>{user?.email || user?.phoneNumber}</p>
+            <p className="text-[#8A2BE2] font-mono text-xs mt-2 font-bold bg-[#8A2BE2]/10 px-3 py-1 rounded-full border border-[#8A2BE2]/30">{user?.isAnonymous ? 'GUEST TIER' : 'INSIDER TIER'}</p>
+          </div>
+          <div className={`${theme.card} border ${theme.border} p-2 space-y-1 font-mono text-sm`}>
+            <button onClick={()=>setActiveTab('orders')} className={`w-full text-left uppercase px-4 py-3 transition-colors ${activeTab === 'orders' ? (isLight ? 'bg-black text-white' : 'bg-[#CCFF00] text-black') : `${theme.textMuted} hover:${theme.text} hover:bg-black/5`}`}><Package size={14} className="inline mr-2 -mt-1"/> Order History</button>
+            <button onClick={()=>setActiveTab('addresses')} className={`w-full text-left uppercase px-4 py-3 transition-colors ${activeTab === 'addresses' ? (isLight ? 'bg-black text-white' : 'bg-[#CCFF00] text-black') : `${theme.textMuted} hover:${theme.text} hover:bg-black/5`}`}><MapPin size={14} className="inline mr-2 -mt-1"/> Coordinates</button>
+            <button onClick={()=>setActiveTab('settings')} className={`w-full text-left uppercase px-4 py-3 transition-colors ${activeTab === 'settings' ? (isLight ? 'bg-black text-white' : 'bg-[#CCFF00] text-black') : `${theme.textMuted} hover:${theme.text} hover:bg-black/5`}`}><SettingsIcon size={14} className="inline mr-2 -mt-1"/> Settings</button>
+            <button onClick={() => signOut(auth).then(()=>handleNavigate('home'))} className="w-full text-left text-red-500 uppercase px-4 py-3 hover:bg-red-500/10 transition-colors mt-2 border-t border-gray-500/20"><LogOutIcon size={14} className="inline mr-2 -mt-1"/> Logout</button>
+          </div>
+        </div>
+        <div className={`col-span-1 md:col-span-3 ${theme.card} border ${theme.border} min-h-[500px] p-6 md:p-8`}>
+          {activeTab === 'orders' && (
+            <div className="animate-in fade-in">
+               <h3 className={`font-black text-2xl uppercase tracking-tighter mb-6 border-b ${theme.border} pb-4 ${theme.text}`} style={{ fontFamily: "'Impact', sans-serif" }}>Transmissions & Orders</h3>
+               {myOrders.length === 0 ? (
+                  <div className="text-center py-20"><p className={`font-mono text-sm ${theme.textMuted}`}>NO TRANSMISSION HISTORY DETECTED.</p><button onClick={() => handleNavigate('shop')} className={`mt-6 font-bold px-8 py-3 uppercase tracking-widest transition-colors ${theme.btnPrimary}`}>Enter Shop</button></div>
+               ) : (
+                  <div className="space-y-6">
+                     {myOrders.map(order => (
+                        <div key={order.id} className={`border ${theme.border} p-4 md:p-6 flex flex-col md:flex-row gap-6 justify-between items-start md:items-center`}>
+                           <div>
+                              <div className="flex items-center gap-3 mb-2"><span className={`px-2 py-1 text-[10px] font-bold uppercase ${order.status === 'PENDING' ? 'bg-yellow-500/20 text-yellow-600 border border-yellow-500/30' : order.status === 'DELIVERED' ? 'bg-green-500/20 text-green-600 border border-green-500/30' : 'bg-[#8A2BE2]/20 text-[#8A2BE2] border border-[#8A2BE2]/30'}`}>{order.status}</span><span className={`font-mono text-xs ${theme.textMuted}`}>{new Date(order.createdAt).toLocaleDateString()}</span></div>
+                              <p className={`font-mono text-xs mb-1 ${theme.textMuted}`}>ORDER ID: <span className={theme.text}>#{order.id.slice(0,10)}</span></p>
+                              <p className={`font-mono font-bold text-lg ${theme.accent}`}>₹{order.total}</p>
+                           </div>
+                           <div className="flex -space-x-4">
+                              {order.items.slice(0,3).map((item, idx) => (<img key={idx} src={item.image} className={`w-12 h-16 object-cover border-2 ${theme.card} rounded-sm grayscale hover:grayscale-0 transition-all`} title={item.name}/>))}
+                              {order.items.length > 3 && <div className={`w-12 h-16 flex items-center justify-center border-2 ${theme.card} bg-gray-800 text-white text-xs font-bold font-mono`}>+{order.items.length - 3}</div>}
+                           </div>
+                        </div>
+                     ))}
+                  </div>
+               )}
+            </div>
+          )}
+          {activeTab === 'addresses' && (
+            <div className="animate-in fade-in max-w-xl">
+               <h3 className={`font-black text-2xl uppercase tracking-tighter mb-6 border-b ${theme.border} pb-4 ${theme.text}`} style={{ fontFamily: "'Impact', sans-serif" }}>Default Coordinates</h3>
+               {savedAddr && (
+                  <div className={`p-4 mb-8 border-l-4 border-[#8A2BE2] bg-[#8A2BE2]/10 font-mono text-sm ${theme.text}`}><p className="font-bold text-[#8A2BE2] mb-2 uppercase">Current Active Coordinates:</p><p>{savedAddr.address}</p><p>{savedAddr.city}, {savedAddr.state} - {savedAddr.pin}</p></div>
+               )}
+               <form onSubmit={handleSaveAddress} className="space-y-4 font-mono text-sm">
+                  <div><label className={`block mb-1 font-bold ${theme.accent}`}>STREET ADDRESS</label><input required value={addrForm.address} onChange={e=>setAddrForm({...addrForm, address: e.target.value})} className={`w-full p-3 outline-none ${theme.input}`} /></div>
+                  <div className="grid grid-cols-2 gap-4"><div><label className={`block mb-1 font-bold ${theme.accent}`}>CITY</label><input required value={addrForm.city} onChange={e=>setAddrForm({...addrForm, city: e.target.value})} className={`w-full p-3 outline-none ${theme.input}`} /></div><div><label className={`block mb-1 font-bold ${theme.accent}`}>STATE</label><input required value={addrForm.state} onChange={e=>setAddrForm({...addrForm, state: e.target.value})} className={`w-full p-3 outline-none ${theme.input}`} /></div></div>
+                  <div><label className={`block mb-1 font-bold ${theme.accent}`}>PINCODE</label><input required value={addrForm.pin} onChange={e=>setAddrForm({...addrForm, pin: e.target.value.replace(/\D/g, '').slice(0,6)})} className={`w-full p-3 outline-none ${theme.input}`} /></div>
+                  <button type="submit" className={`w-full font-bold py-4 uppercase tracking-widest mt-4 ${theme.btnPrimary}`}>Update Coordinates</button>
+               </form>
+            </div>
+          )}
+          {activeTab === 'settings' && (
+            <div className="animate-in fade-in max-w-xl">
+               <h3 className={`font-black text-2xl uppercase tracking-tighter mb-6 border-b ${theme.border} pb-4 ${theme.text}`} style={{ fontFamily: "'Impact', sans-serif" }}>System Settings</h3>
+               <form onSubmit={handleUpdateProfile} className="space-y-6 font-mono text-sm">
+                  <div><label className={`block mb-2 font-bold ${theme.accent}`}>OPERATIVE NAME</label><input required value={updateName} onChange={e=>setUpdateName(e.target.value)} className={`w-full p-3 outline-none ${theme.input}`} /></div>
+                  <div>
+                     <label className={`block mb-2 font-bold ${theme.accent}`}>AVATAR PROJECTION URL</label>
+                     <div className="flex gap-4 mb-4">
+                        {updateAvatar ? <img src={updateAvatar} className={`w-16 h-16 rounded-full object-cover border ${theme.border}`} /> : <div className={`w-16 h-16 rounded-full flex items-center justify-center ${theme.border} border border-dashed text-gray-500`}>N/A</div>}
+                        <div className="flex-1"><input value={updateAvatar} onChange={e=>setUpdateAvatar(e.target.value)} placeholder="Paste new image URL..." className={`w-full p-3 outline-none ${theme.input}`} /></div>
+                     </div>
+                  </div>
+                  <button type="submit" className={`w-full font-bold py-4 uppercase tracking-widest ${theme.btnPrimary}`}>Save Profile Changes</button>
+               </form>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const CheckoutView = ({ appState }) => {
+  const { theme, isLight, user, cart, cartTotal, freeShippingThreshold, setCart, saveUserData, wishlist, handleNavigate } = appState;
+  const [formData, setFormData] = useState({ name: '', address: '', city: '', state: '', pin: '', phone: '' });
+  const [paymentMode, setPaymentMode] = useState('UPI');
+  const [processing, setProcessing] = useState(false);
+  const [showSuccessModal, setShowSuccessModal] = useState(false);
+  const [fetchingCity, setFetchingCity] = useState(false);
+
+  useEffect(() => {
+    if (user) {
+       setFormData(prev => ({ ...prev, name: user.displayName || '', phone: user.phoneNumber ? user.phoneNumber.replace('+91', '') : '' }));
+       getDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'userdata', 'state')).then(docSnap => {
+          if (docSnap.exists() && docSnap.data().savedAddress) { setFormData(prev => ({ ...prev, ...docSnap.data().savedAddress })); }
+       }).catch(e => console.error(e));
+    }
+  }, [user]);
+
+  const handlePhoneChange = (e) => { const val = e.target.value.replace(/\D/g, '').slice(0, 10); setFormData({...formData, phone: val}); };
+  const handlePinChange = async (e) => {
+    const val = e.target.value.replace(/\D/g, '').slice(0, 6);
+    setFormData(prev => ({...prev, pin: val}));
+    if (val.length === 6) {
+      setFetchingCity(true);
+      try { const res = await fetch(`https://api.postalpincode.in/pincode/${val}`); const data = await res.json(); if (data && data[0].Status === 'Success') { const po = data[0].PostOffice[0]; setFormData(prev => ({...prev, city: po.District, state: po.State})); } } catch (e) { console.error(e); } finally { setFetchingCity(false); }
+    }
+  };
+
+  const handlePlaceOrder = async (e) => { 
+    e.preventDefault(); 
+    if(!user) { alert("AUTHENTICATION REQUIRED."); return; }
+    if(formData.phone.length !== 10) { alert("PHONE MUST BE 10 DIGITS."); return; }
+    if(formData.pin.length !== 6) { alert("PINCODE MUST BE 6 DIGITS."); return; }
+    setProcessing(true); 
+    try {
+      const orderTotal = cartTotal > freeShippingThreshold ? cartTotal : cartTotal + 150;
+      const displayUser = user.displayName || (user.email ? user.email.replace('@cyber.net', '') : 'Guest');
+      const orderData = { userId: user.uid, userEmail: displayUser, items: cart, total: orderTotal, shippingInfo: formData, paymentMode: paymentMode, status: 'PENDING', createdAt: new Date().toISOString() };
+      await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'orders'), orderData);
+      setCart([]); saveUserData([], wishlist); setProcessing(false); setShowSuccessModal(true); 
+    } catch (err) { console.error("Order sync failed", err); alert("TRANSMISSION FAILED. PLEASE TRY AGAIN."); setProcessing(false); }
+  };
+
+  if (showSuccessModal) {
+    return (
+      <div className="fixed inset-0 z-[999] bg-black flex items-center justify-center p-4">
+        <div className="bg-[#0A0A0A] border border-red-500/50 w-full max-w-lg p-8 relative flex flex-col items-center text-center animate-in fade-in zoom-in duration-500">
+          <div className="w-20 h-20 rounded-full bg-red-500/10 flex items-center justify-center mb-6"><AlertOctagon size={40} className="text-red-500 animate-pulse" /></div>
+          <h2 className="text-3xl font-black text-white uppercase tracking-tighter mb-2" style={{ fontFamily: "'Impact', sans-serif" }}>Order Secured</h2>
+          <p className="font-mono text-sm text-[#CCFF00] mb-6 tracking-widest">TRANSMISSION SUCCESSFUL</p>
+          <div className="bg-red-500/10 border border-red-500/30 p-5 mb-8 text-left"><h3 className="text-red-500 font-bold uppercase text-sm mb-2 flex items-center gap-2"><Lock size={16}/> Mandatory Protocol</h3><p className="font-mono text-xs text-gray-300 leading-relaxed">To combat tampering in the supply chain, you <span className="text-white font-bold underline">MUST</span> record a clear, continuous unboxing video when your package arrives. <br/><br/>No claims for missing or damaged items will be processed without unedited video evidence showing the sealed package being opened.</p></div>
+          <button onClick={() => { setShowSuccessModal(false); handleNavigate('account'); }} className="w-full bg-white text-black font-black py-4 uppercase tracking-widest hover:bg-[#CCFF00] transition-colors">I Acknowledge & Understand</button>
+        </div>
+      </div>
+    );
+  }
+
+  if (cart.length === 0) return (
+    <div className="pt-32 px-4 max-w-4xl mx-auto min-h-screen text-center"><h2 className={`text-4xl font-black uppercase tracking-tighter mb-4 ${theme.text}`} style={{ fontFamily: "'Impact', sans-serif" }}>Secure Checkout</h2><p className={`font-mono text-sm mb-6 ${theme.textMuted}`}>YOUR CART IS EMPTY. RETURN TO THE VOID.</p><button onClick={() => handleNavigate('shop')} className={`font-bold px-8 py-3 uppercase tracking-widest transition-colors ${theme.btnPrimary}`}>Back to Catalog</button></div>
+  );
+
+  return (
+    <div className="pt-24 px-4 max-w-7xl mx-auto min-h-screen pb-20">
+      <h2 className={`text-4xl font-black uppercase tracking-tighter mb-8 ${theme.text}`} style={{ fontFamily: "'Impact', sans-serif" }}>Secure Checkout</h2>
+      <div className="grid md:grid-cols-2 gap-12">
+        <form onSubmit={handlePlaceOrder} className="space-y-8">
+          <div className={`${theme.card} border ${theme.border} p-6`}>
+            <h3 className={`font-mono font-bold uppercase mb-4 border-b ${theme.border} pb-2 ${theme.accent}`}>1. Shipping Coordinates</h3>
+            <div className="space-y-4 font-mono text-sm">
+              <input required placeholder="FULL NAME" value={formData.name} onChange={e=>setFormData({...formData, name: e.target.value})} className={`w-full p-3 outline-none ${theme.input}`} />
+              <input required placeholder="PHONE NUMBER (10 DIGITS)" value={formData.phone} onChange={handlePhoneChange} className={`w-full p-3 outline-none ${theme.input}`} />
+              <input required placeholder="STREET ADDRESS & HOUSE NO." value={formData.address} onChange={e=>setFormData({...formData, address: e.target.value})} className={`w-full p-3 outline-none ${theme.input}`} />
+              <div className="grid grid-cols-3 gap-4">
+                <div className="col-span-1 relative"><input required placeholder="PINCODE" value={formData.pin} onChange={handlePinChange} className={`w-full p-3 outline-none ${theme.input}`} />{fetchingCity && <Loader2 size={14} className={`absolute right-3 top-4 animate-spin ${theme.accent}`} />}</div>
+                <input required placeholder="CITY" value={formData.city} onChange={e=>setFormData({...formData, city: e.target.value})} className={`col-span-1 w-full p-3 outline-none ${theme.input}`} />
+                <input required placeholder="STATE" value={formData.state} onChange={e=>setFormData({...formData, state: e.target.value})} className={`col-span-1 w-full p-3 outline-none ${theme.input}`} />
+              </div>
+            </div>
+          </div>
+          <div className={`${theme.card} border ${theme.border} p-6`}>
+            <h3 className={`font-mono font-bold uppercase mb-4 border-b ${theme.border} pb-2 ${theme.accent}`}>2. Payment Protocol</h3>
+            <div className="space-y-3 font-mono text-sm">
+              {['UPI', 'CREDIT/DEBIT CARD', 'CASH ON DELIVERY'].map(mode => (
+                <label key={mode} className={`flex items-center gap-3 p-4 border cursor-pointer transition-colors ${paymentMode === mode ? `border-[#8A2BE2] bg-[#8A2BE2]/10` : `${theme.border} hover:border-black/30`}`}><input type="radio" name="payment" value={mode} checked={paymentMode === mode} onChange={(e) => setPaymentMode(e.target.value)} className="accent-[#8A2BE2]" /><span className={`uppercase font-bold ${theme.text}`}>{mode}</span></label>
+              ))}
+            </div>
+          </div>
+          <button disabled={processing} type="submit" className={`w-full font-black py-5 uppercase tracking-widest text-lg disabled:opacity-50 flex justify-center items-center transition-colors ${theme.btnPrimary}`}>
+            {processing ? <Loader2 className="animate-spin" size={24} /> : `PLACE ORDER • ₹${cartTotal > freeShippingThreshold ? cartTotal : cartTotal + 150}`}
+          </button>
+        </form>
+        <div className={`${theme.card} border ${theme.border} p-6 h-fit sticky top-28`}>
+           <h3 className={`font-bold uppercase mb-6 border-b ${theme.border} pb-4 ${theme.text}`}>Order Summary</h3>
+           <div className="space-y-4 mb-6 max-h-64 overflow-y-auto pr-2">
+             {cart.map((item, idx) => (
+               <div key={idx} className="flex gap-4"><img src={item.image} className={`w-16 h-20 object-cover grayscale border ${theme.border}`} /><div className="flex-1 flex flex-col justify-center"><p className={`text-xs font-bold uppercase ${theme.text}`}>{item.name}</p><p className={`font-mono text-[10px] ${theme.textMuted}`}>QTY: 1</p><p className={`font-mono text-xs mt-1 ${theme.accent}`}>₹{item.price}</p></div></div>
+             ))}
+           </div>
+           <div className={`border-t ${theme.border} pt-4 space-y-2 font-mono text-sm`}>
+             <div className={`flex justify-between ${theme.textMuted}`}><span>SUBTOTAL</span><span>₹{cartTotal}</span></div>
+             <div className={`flex justify-between ${theme.textMuted}`}><span>SHIPPING</span><span>{cartTotal > freeShippingThreshold ? 'FREE' : '₹150'}</span></div>
+             <div className={`flex justify-between font-bold text-lg pt-4 border-t ${theme.border} mt-2 ${theme.text}`}><span>TOTAL</span><span className={theme.accent}>₹{cartTotal > freeShippingThreshold ? cartTotal : cartTotal + 150}</span></div>
+           </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const HelpCenter = ({ appState }) => {
+  const { theme, isLight, user } = appState;
+  const [ticketMsg, setTicketMsg] = useState(''); const [ticketSent, setTicketSent] = useState(false); const [openFaq, setOpenFaq] = useState(null);
+  const faqs = [{ q: "Where is my order?", a: "Once processed, you will receive a tracking link. Pan-India delivery takes 48-72 hours." }, { q: "Do you offer returns?", a: "Yes, within 7 days. HOWEVER, an unedited unboxing video is strictly mandatory." }, { q: "What does 'Heavyweight Cotton' mean?", a: "We use 240GSM to 400GSM cotton. It is thicker, more durable, and drapes better." }, { q: "Do you restock sold-out items?", a: "Rarely. Join the WhatsApp underground list to get notified." }];
+  const handleSubmitTicket = async (e) => { e.preventDefault(); if(!ticketMsg.trim()) return; try { await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'tickets'), { userEmail: user?.displayName || (user?.email ? user.email.replace('@cyber.net', '') : 'Anonymous'), message: ticketMsg, status: 'OPEN', createdAt: new Date().toISOString(), reply: null }); setTicketSent(true); setTicketMsg(''); } catch (err) { console.error(err); alert("Failed to transmit."); } };
+
+  return (
+    <div className="pt-24 px-4 max-w-4xl mx-auto min-h-screen pb-20">
+      <h2 className={`text-4xl md:text-5xl font-black uppercase tracking-tighter mb-2 ${theme.text}`} style={{ fontFamily: "'Impact', sans-serif" }}>Help & Transmissions</h2>
+      <p className={`font-mono text-sm mb-12 ${theme.textMuted}`}>KNOWLEDGE BASE AND DIRECT COMM PROTOCOLS.</p>
+      <div className="grid md:grid-cols-2 gap-12 items-start">
+        <div>
+          <h3 className={`font-bold uppercase tracking-widest text-sm mb-6 ${theme.text} flex items-center gap-2`}><HelpCircle size={16}/> Frequency Asked</h3>
+          <div className="space-y-4">{faqs.map((faq, i) => (<div key={i} className={`border ${theme.border} ${theme.card}`}><button onClick={() => setOpenFaq(openFaq === i ? null : i)} className={`w-full text-left p-4 font-mono font-bold text-sm uppercase flex justify-between items-center ${theme.text}`}>{faq.q} {openFaq === i ? <ChevronUp size={16}/> : <ChevronDown size={16}/>}</button>{openFaq === i && <div className={`p-4 pt-0 text-sm font-mono leading-relaxed ${theme.textMuted}`}>{faq.a}</div>}</div>))}</div>
+        </div>
+        <div className={`${theme.card} border ${theme.border} p-6`}>
+          <h3 className={`font-bold uppercase tracking-widest text-sm mb-6 ${theme.text} flex items-center gap-2`}><MessageSquare size={16}/> Direct Transmission</h3>
+          {ticketSent ? (
+            <div className="text-center py-8 animate-in fade-in"><CheckCircle size={48} className={`mx-auto mb-4 ${theme.accent}`} /><p className={`font-bold uppercase ${theme.text}`}>Message Received</p><p className={`font-mono text-xs mt-2 ${theme.textMuted}`}>Our operatives will review your transmission shortly.</p><button onClick={()=>setTicketSent(false)} className="mt-6 text-xs font-mono uppercase underline text-gray-500">Send Another</button></div>
+          ) : (
+            <form onSubmit={handleSubmitTicket} className="space-y-4 font-mono text-sm"><p className={`text-xs ${theme.textMuted} mb-4`}>Submit a direct request to the admin terminal. Replies will be routed to your account.</p><textarea required value={ticketMsg} onChange={e=>setTicketMsg(e.target.value)} placeholder="Describe your issue or inquiry..." className={`w-full p-4 outline-none h-32 resize-none ${theme.input}`}></textarea><button type="submit" className={`w-full font-black py-4 uppercase tracking-widest transition-colors ${theme.btnPrimary}`}>Transmit Message</button></form>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const ProductDetail = ({ appState }) => {
+  const { theme, isLight, selectedProduct, setShowSizeAI, addToCart, toggleWishlist, wishlist } = appState;
+  const [activeTab, setActiveTab] = useState('desc');
+  return (
+    <div className="pt-24 pb-32 md:pb-12 px-4 max-w-7xl mx-auto min-h-screen">
+       <button onClick={() => window.history.back()} className={`${theme.textMuted} hover:${theme.text} font-mono text-xs mb-8 flex items-center gap-2 uppercase tracking-widest transition-colors`}><ArrowLeft size={16} /> Back to Catalog</button>
+       <div className="grid md:grid-cols-2 gap-12 items-start">
+         <div className="space-y-4 md:sticky md:top-24">
+           <div className={`aspect-[4/5] ${theme.card} border ${theme.border} relative overflow-hidden group w-full`}><img src={selectedProduct.image} className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-105" alt={selectedProduct.name} />{selectedProduct.badge && <div className={`absolute top-4 left-4 text-[10px] font-bold px-3 py-1 uppercase tracking-widest ${isLight ? 'bg-black text-white' : 'bg-[#CCFF00] text-black'}`}>{selectedProduct.badge}</div>}</div>
+           <div className="grid grid-cols-3 gap-4 hidden md:grid">{[1,2,3].map(i => (<div key={i} className={`aspect-square ${theme.card} border ${theme.border} cursor-pointer hover:border-gray-400 overflow-hidden`}><img src={selectedProduct.image} className="w-full h-full object-cover opacity-70 hover:opacity-100 transition-opacity" /></div>))}</div>
+         </div>
+         <div className="flex flex-col">
+           <div className="mb-6 border-b border-gray-200 pb-6"><div className="flex items-center gap-2 mb-3"><div className="flex text-[#8A2BE2] drop-shadow-sm">{[1,2,3,4,5].map(star => <Star key={star} size={14} fill="currentColor" />)}</div><span className={`text-xs font-mono ${theme.textMuted}`}>(128 Reviews)</span></div><h1 className={`text-4xl md:text-5xl font-black uppercase tracking-tighter mb-4 ${theme.text}`} style={{ fontFamily: "'Impact', sans-serif" }}>{selectedProduct.name}</h1><p className={`text-3xl font-mono ${isLight ? 'text-black font-extrabold' : 'text-[#E5E5E5]'}`}>₹{selectedProduct.price}</p></div>
+           <div className="mb-8"><div className="flex justify-between items-center mb-4"><span className={`font-bold uppercase tracking-widest text-sm ${theme.text}`}>Select Size</span><button onClick={() => setShowSizeAI(true)} className="text-[#8A2BE2] flex items-center gap-2 font-mono text-xs hover:underline cursor-pointer"><Ruler size={14} /> Size Guide</button></div><div className="grid grid-cols-4 gap-4">{['S', 'M', 'L', 'XL'].map(s => <button key={s} className={`h-14 border font-mono text-lg transition-colors ${isLight ? 'border-black/20 text-black hover:border-black hover:bg-black/5 focus:border-black focus:bg-black focus:text-white' : 'border-white/20 text-white hover:border-[#CCFF00] hover:text-[#CCFF00] focus:border-[#CCFF00] focus:bg-[#CCFF00]/10'}`}>{s}</button>)}</div></div>
+           <div className="hidden md:flex gap-4 mb-10"><button onClick={() => addToCart(selectedProduct)} className={`flex-1 font-black py-5 uppercase tracking-[0.2em] text-sm transition-colors ${theme.btnPrimary} relative overflow-hidden group`}><div className="absolute inset-0 bg-white/20 translate-y-full group-hover:translate-y-0 transition-transform duration-300 ease-in-out z-0"></div><span className="relative z-10 flex items-center justify-center gap-2"><ShoppingBag size={18} /> Add To Cart</span></button><button onClick={() => toggleWishlist(selectedProduct)} className={`w-16 flex items-center justify-center border transition-colors ${isLight ? 'border-black/20 text-black hover:border-black' : 'border-white/20 text-white hover:border-[#8A2BE2]'}`}><Heart fill={wishlist.find(i => i.id === selectedProduct.id) ? (isLight ? "#000" : "#8A2BE2") : "none"} /></button></div>
+           <div className="space-y-4">
+              <div className={`border ${theme.border} ${theme.card}`}><button onClick={() => setActiveTab(activeTab === 'desc' ? '' : 'desc')} className="w-full flex justify-between items-center p-4 font-bold uppercase tracking-widest text-sm">Product Details {activeTab === 'desc' ? <ChevronUp size={16}/> : <ChevronDown size={16}/>}</button>{activeTab === 'desc' && <div className={`p-4 pt-0 text-sm font-mono leading-relaxed ${theme.textMuted}`}>{selectedProduct.description || "Forged for the urban dystopia. This piece features advanced construction and proprietary fabric blends."}<ul className="mt-4 space-y-2 text-xs"><li className="flex items-center gap-2"><div className="w-1 h-1 bg-[#8A2BE2] rounded-full"></div> 100% Premium Heavyweight Cotton</li><li className="flex items-center gap-2"><div className="w-1 h-1 bg-[#8A2BE2] rounded-full"></div> Oversized drop-shoulder fit</li></ul></div>}</div>
+              <div className={`border ${theme.border} ${theme.card}`}><button onClick={() => setActiveTab(activeTab === 'ship' ? '' : 'ship')} className="w-full flex justify-between items-center p-4 font-bold uppercase tracking-widest text-sm">Shipping & Returns {activeTab === 'ship' ? <ChevronUp size={16}/> : <ChevronDown size={16}/>}</button>{activeTab === 'ship' && <div className={`p-4 pt-0 text-xs font-mono space-y-3 ${theme.textMuted}`}><p className="flex items-center gap-2"><Truck size={14} className={theme.accent} /> Express Pan-India delivery within 48-72 hours.</p><p className="flex items-center gap-2"><RefreshCw size={14} className="text-[#8A2BE2]" /> 7-day returns. Mandatory unboxing video required.</p></div>}</div>
+           </div>
+         </div>
+       </div>
+       <div className={`fixed bottom-0 left-0 right-0 p-4 ${isLight ? 'bg-white/90 border-black/10' : 'bg-black/90 border-white/10'} backdrop-blur-md border-t md:hidden z-40 transform transition-transform`}><div className="flex gap-2"><button onClick={() => toggleWishlist(selectedProduct)} className={`w-14 flex items-center justify-center border transition-colors ${isLight ? 'border-black/20 text-black hover:border-black' : 'border-white/20 text-white hover:border-[#8A2BE2]'}`}><Heart fill={wishlist.find(i => i.id === selectedProduct.id) ? (isLight ? "#000" : "#8A2BE2") : "none"} /></button><button onClick={() => addToCart(selectedProduct)} className={`flex-1 font-black py-4 uppercase tracking-widest flex justify-center items-center gap-2 ${theme.btnPrimary}`}><ShoppingBag size={18} /> ₹{selectedProduct.price}</button></div></div>
+    </div>
+  );
+};
+
+const Shop = ({ appState }) => {
+  const { theme, isLight, shopCategory, setShopCategory, products, setShowVibeMatcher, openProduct } = appState;
+  const [sortBy, setSortBy] = useState('recommended');
+  let filteredProducts = shopCategory === 'All Categories' ? products : products.filter(p => p.category === shopCategory);
+  if (sortBy === 'price-low') filteredProducts = [...filteredProducts].sort((a, b) => a.price - b.price);
+  else if (sortBy === 'price-high') filteredProducts = [...filteredProducts].sort((a, b) => b.price - a.price);
+
+  return (
+    <div className="pt-24 pb-20 px-4 max-w-7xl mx-auto min-h-screen">
+      <div className="mb-6 md:mb-8">
+        <div className="flex flex-col md:flex-row md:items-end justify-between gap-4 mb-6">
+          <div><h2 className={`text-3xl md:text-5xl font-black uppercase tracking-tighter ${theme.text}`} style={{ fontFamily: "'Impact', sans-serif" }}>{shopCategory === 'All Categories' ? 'The Collection' : shopCategory}</h2><p className={`font-mono text-xs mt-1 md:mt-2 uppercase tracking-widest ${theme.textMuted}`}>[{filteredProducts.length} Items Detected]</p></div>
+          <div className="flex flex-wrap items-center gap-2 md:gap-4"><button onClick={() => setShowVibeMatcher(true)} className="flex-1 md:flex-none justify-center flex items-center gap-2 bg-[#8A2BE2]/10 text-[#8A2BE2] border border-[#8A2BE2]/30 px-4 py-2.5 font-mono text-xs uppercase hover:bg-[#8A2BE2] hover:text-white transition-all"><Sparkles size={14} /> AI Vibe Check</button><div className={`flex items-center border ${theme.border} px-3 py-2.5 flex-1 md:flex-none bg-transparent`}><span className={`text-[10px] uppercase font-bold mr-2 ${theme.textMuted}`}>Sort:</span><select value={sortBy} onChange={e => setSortBy(e.target.value)} className={`bg-transparent font-mono text-xs uppercase outline-none cursor-pointer ${theme.text} w-full`}><option value="recommended" className="bg-black text-white">Recommended</option><option value="price-high" className="bg-black text-white">Price: High to Low</option><option value="price-low" className="bg-black text-white">Price: Low to High</option></select></div></div>
+        </div>
+        <div className="flex gap-2 overflow-x-auto pb-2 scrollbar-hide">{['All Categories', 'Outerwear', 'Tops', 'Bottoms', 'Hardware'].map(cat => (<button key={cat} onClick={() => setShopCategory(cat)} className={`whitespace-nowrap px-6 py-2.5 font-mono text-xs font-bold uppercase border transition-colors ${shopCategory === cat ? (isLight ? 'bg-black text-white border-black' : 'bg-[#CCFF00] text-black border-[#CCFF00]') : `border-${isLight?'black/10':'white/10'} ${theme.textMuted} hover:${theme.text} hover:border-${isLight?'black':'white'}`}`}>{cat}</button>))}</div>
+      </div>
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 md:gap-6">
+      {filteredProducts.map(product => (
+        <div key={product.id} className="group cursor-pointer flex flex-col" onClick={() => openProduct(product)}>
+          <div className={`relative aspect-[3/4] ${theme.card} overflow-hidden border ${isLight ? 'border-black/5 group-hover:border-black/50' : 'border-white/5 group-hover:border-[#CCFF00]/50'} transition-colors mb-3`}><img src={product.image} alt={product.name} className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-105" />{product.badge && <div className={`absolute top-2 left-2 md:top-4 md:left-4 text-[8px] md:text-[10px] font-bold px-2 py-1 uppercase mix-blend-screen ${isLight ? 'bg-black text-white' : 'bg-white text-black'}`}>{product.badge}</div>}<div className="absolute inset-0 bg-[#8A2BE2] mix-blend-overlay opacity-0 group-hover:opacity-20 transition-opacity hidden md:block"></div></div>
+          <div className="flex flex-col flex-1"><h3 className={`font-bold uppercase tracking-tight text-[11px] md:text-sm mb-1 line-clamp-1 transition-colors ${theme.text} group-hover:text-[#8A2BE2]`}>{product.name}</h3><p className={`font-mono text-[9px] md:text-xs mb-2 ${theme.textMuted}`}>{product.category}</p><span className={`font-mono text-xs md:text-sm mt-auto ${isLight ? 'text-black font-extrabold' : 'text-[#E5E5E5] font-bold'}`}>₹{product.price}</span></div>
+        </div>
+      ))}
+      </div>
+    </div>
+  );
+};
+
+const AdminPanel = ({ appState }) => {
+  const { handleNavigate, user, products } = appState;
+  const [adminView, setAdminView] = useState('dashboard');
+  const [orders, setOrders] = useState([]);
+  const [tickets, setTickets] = useState([]);
+  
+  useEffect(() => {
+    let unsubOrders, unsubTickets;
+    const authenticateAndFetch = async () => {
+      try {
+        if (!user) await signInAnonymously(auth);
+        unsubOrders = onSnapshot(query(collection(db, 'artifacts', appId, 'public', 'data', 'orders')), (snap) => {
+          const loaded = snap.docs.map(doc => ({ id: doc.id, ...doc.data() })).sort((a,b) => new Date(b.createdAt) - new Date(a.createdAt)); 
+          setOrders(loaded);
+        }, (err) => console.error("Admin orders error:", err)); // FATAL CRASH FIX
+        unsubTickets = onSnapshot(query(collection(db, 'artifacts', appId, 'public', 'data', 'tickets')), (snap) => {
+          const loadedT = snap.docs.map(doc => ({ id: doc.id, ...doc.data() })).sort((a,b) => new Date(b.createdAt) - new Date(a.createdAt)); 
+          setTickets(loadedT);
+        }, (err) => console.error("Admin tickets error:", err)); // FATAL CRASH FIX
+      } catch (authErr) { console.error("Admin Auth Error", authErr); }
+    }
+    authenticateAndFetch();
+    return () => { if(unsubOrders) unsubOrders(); if(unsubTickets) unsubTickets(); };
+  }, [user]);
+
+  const handleReplyTicket = async (ticketId) => { const reply = prompt("Enter your reply to the user. This will mark the ticket as resolved."); if(reply) { try { await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'tickets', ticketId), { status: 'RESOLVED', reply: reply }); } catch(e){} } };
+
+  const DronaTabs = [{ id: 'dashboard', icon: LayoutDashboard, label: 'Analytics Dashboard' }, { id: 'orders', icon: Package, label: 'Fulfillment Tracking' }, { id: 'products', icon: Box, label: 'Product & Catalog' }, { id: 'tickets', icon: MessageSquare, label: 'Support Inbox' }, { id: 'crm', icon: Users, label: 'Customer Relations' }, { id: 'marketing', icon: Tag, label: 'Marketing & Promos' }];
+  const totalRevenue = orders.reduce((sum, o) => sum + (o.total || 0), 0);
+
+  return (
+    <div className="min-h-screen bg-[#050505] text-[#E5E5E5] flex flex-col md:flex-row cursor-default font-mono selection:bg-[#CCFF00] selection:text-black">
+      <div className="w-full md:w-72 bg-[#0A0A0A] border-r border-[#333] flex flex-col h-screen sticky top-0">
+        <div className="p-6 border-b border-[#333] flex items-center justify-between bg-black"><div><h1 className="text-2xl font-black uppercase text-[#CCFF00]" style={{ fontFamily: "'Impact', sans-serif" }}>SYS.ADMIN</h1><p className="text-[10px] text-[#8A2BE2] mt-1">DRONA_HQ SECURE PROTOCOL</p></div><button onClick={() => handleNavigate('home')} className="text-gray-500 hover:text-white p-2 border border-[#333] bg-[#0A0A0A]"><X size={14} /></button></div>
+        <div className="p-4 space-y-1 flex-1 overflow-y-auto">{DronaTabs.map(item => (<button key={item.id} onClick={() => setAdminView(item.id)} className={`w-full flex items-center justify-between px-4 py-3 uppercase text-xs font-bold border transition-colors ${adminView === item.id ? 'bg-[#CCFF00]/10 border-[#CCFF00] text-[#CCFF00]' : 'border-transparent text-gray-500 hover:text-white hover:bg-white/5 hover:border-[#333]'}`}><div className="flex items-center gap-3"><item.icon size={14} /> {item.label}</div>{item.id === 'tickets' && tickets.filter(t=>t.status==='OPEN').length > 0 && <span className="bg-red-500 text-white px-2 py-0.5 rounded-full text-[10px]">{tickets.filter(t=>t.status==='OPEN').length}</span>}</button>))}</div>
+        <div className="p-4 border-t border-[#333] bg-black"><div className="flex items-center gap-3"><div className="w-8 h-8 rounded bg-[#8A2BE2] flex items-center justify-center font-bold text-white text-xs">AD</div><div><p className="text-xs font-bold text-white">MASTER ADMIN</p><p className="text-[10px] text-green-500 flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-green-500 inline-block animate-pulse"></span> ONLINE</p></div></div></div>
+      </div>
+      <div className="flex-1 p-4 md:p-8 h-screen overflow-y-auto bg-[url('https://www.transparenttextures.com/patterns/cubes.png')] bg-repeat">
+        <div className="max-w-6xl mx-auto">
+          {adminView === 'dashboard' && (
+            <div className="animate-in fade-in"><div className="flex justify-between items-end mb-8 border-b border-[#333] pb-4"><div><h2 className="text-2xl font-black uppercase text-white">Analytics Dashboard</h2><p className="text-xs text-gray-500 mt-1">Real-time visualization of key metrics</p></div><button onClick={() => window.print()} className="bg-[#CCFF00] text-black text-xs font-bold px-4 py-2 uppercase hover:bg-white transition-colors">Export PDF Report</button></div><div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8"><div className="bg-[#0A0A0A] border border-[#333] p-5"><p className="text-[10px] text-gray-500 mb-2 uppercase">Gross Revenue</p><p className="text-3xl text-[#CCFF00]">₹{totalRevenue}</p></div><div className="bg-[#0A0A0A] border border-[#333] p-5"><p className="text-[10px] text-gray-500 mb-2 uppercase">Order Volume</p><p className="text-3xl text-white">{orders.length}</p></div><div className="bg-[#0A0A0A] border border-[#333] p-5"><p className="text-[10px] text-gray-500 mb-2 uppercase">Open Tickets</p><p className="text-3xl text-red-500">{tickets.filter(t=>t.status==='OPEN').length}</p></div><div className="bg-[#0A0A0A] border border-[#333] p-5"><p className="text-[10px] text-gray-500 mb-2 uppercase">Cart Abandonment</p><p className="text-3xl text-white">64%</p></div></div></div>
+          )}
+          {adminView === 'tickets' && (
+            <div className="animate-in fade-in"><div className="flex justify-between items-end mb-8 border-b border-[#333] pb-4"><div><h2 className="text-2xl font-black uppercase text-white">Support Inbox</h2><p className="text-xs text-gray-500 mt-1">Resolve incoming transmissions</p></div></div><div className="space-y-4">{tickets.map(t => (<div key={t.id} className="bg-[#0A0A0A] border border-[#333] p-6"><div className="flex justify-between items-start mb-4"><div><span className="text-white font-bold">{t.userEmail}</span><span className="text-gray-500 text-[10px] ml-4">{new Date(t.createdAt).toLocaleString()}</span></div><span className={`text-[10px] font-bold px-2 py-1 uppercase ${t.status==='OPEN' ? 'bg-red-500/20 text-red-500' : 'bg-green-500/20 text-green-500'}`}>{t.status}</span></div><p className="text-sm text-gray-300 mb-4 pb-4 border-b border-[#333]">"{t.message}"</p>{t.status === 'OPEN' ? (<button onClick={()=>handleReplyTicket(t.id)} className="text-[#8A2BE2] text-xs font-bold uppercase hover:underline flex items-center gap-2"><MessageSquare size={14}/> Reply & Resolve</button>) : (<div className="text-xs text-gray-500"><span className="text-[#CCFF00] font-bold">ADMIN REPLY:</span> {t.reply}</div>)}</div>))}{tickets.length === 0 && <p className="text-center text-gray-500 py-8">NO INCOMING TRANSMISSIONS.</p>}</div></div>
+          )}
+          {adminView === 'orders' && (<div className="animate-in fade-in"><h2 className="text-2xl font-black uppercase text-white mb-8 border-b border-[#333] pb-4">Fulfillment Tracking</h2><div className="bg-[#0A0A0A] border border-[#333] overflow-x-auto"><table className="w-full text-left text-xs whitespace-nowrap"><thead className="bg-[#111] text-gray-400 uppercase"><tr><th className="p-4 border-b border-[#333]">ID</th><th className="p-4 border-b border-[#333]">Customer</th><th className="p-4 border-b border-[#333]">Value</th><th className="p-4 border-b border-[#333]">Status</th></tr></thead><tbody className="text-gray-300">{orders.map(o=><tr key={o.id} className="border-b border-[#333]"><td className="p-4">#{o.id.slice(0,8)}</td><td className="p-4">{o.userEmail}</td><td className="p-4 text-[#CCFF00]">₹{o.total}</td><td className="p-4">{o.status}</td></tr>)}</tbody></table></div></div>)}
+          {adminView === 'products' && (<div className="animate-in fade-in"><h2 className="text-2xl font-black uppercase text-white mb-8 border-b border-[#333] pb-4">Product Catalog</h2><div className="grid grid-cols-2 md:grid-cols-4 gap-4">{products.map(p=><div key={p.id} className="bg-[#0A0A0A] border border-[#333] p-4"><img src={p.image} className="w-full h-32 object-cover mb-2"/><p className="text-xs text-white font-bold truncate">{p.name}</p><p className="text-[#CCFF00] text-xs">₹{p.price}</p></div>)}</div></div>)}
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const Vault = ({ appState }) => {
+  const { theme, wishlist, addToCart } = appState;
+  return (
+    <div className="pt-24 px-4 max-w-7xl mx-auto min-h-screen text-center">
+      <h2 className={`text-4xl font-black uppercase tracking-tighter mb-4 ${theme.text}`} style={{ fontFamily: "'Impact', sans-serif" }}>The Vault</h2>
+      {wishlist.length === 0 ? ( <p className={`font-mono ${theme.textMuted}`}>YOUR VAULT IS EMPTY.</p> ) : (
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-8 text-left">
+            {wishlist.map(w => (
+              <div key={w.id} className={`${theme.card} border ${theme.border} p-4`}><img src={w.image} className="w-full aspect-square object-cover mb-2 grayscale" /><p className={`text-xs font-bold uppercase truncate ${theme.text}`}>{w.name}</p><p className={`font-mono text-xs ${theme.accent}`}>₹{w.price}</p><button onClick={() => addToCart(w)} className={`w-full mt-2 text-[10px] font-bold py-2 uppercase transition-colors ${theme.btnPrimary}`}>Move to Cart</button></div>
+            ))}
+          </div>
+      )}
+    </div>
+  );
+};
+
+const Home = ({ appState }) => {
+  const { enterVault } = appState;
+  return (
     <>
       <div className="relative min-h-screen pt-24 pb-12 flex flex-col items-center justify-center overflow-hidden bg-[#050505] border-b border-white/10 group">
         <div className="absolute inset-0 bg-[url('https://images.unsplash.com/photo-1492684223066-81342ee5ff30?auto=format&fit=crop&q=80')] bg-cover bg-center opacity-30 mix-blend-luminosity animate-pan-bg"></div>
@@ -979,52 +784,179 @@ export default function App() {
       </div>
     </>
   );
+};
 
-  const renderContent = () => {
-    if (selectedProduct) return <ProductDetail />;
-    switch(view) {
-      case 'home': return <Home />;
-      case 'shop': return <Shop />;
-      case 'account': return <Account />;
-      case 'auth': return <AuthView />;
-      case 'checkout': return <CheckoutView />;
-      case 'vault': return <Vault />;
-      case 'help': return <HelpCenter />;
-      case 'admin': return <AdminPanel />;
-      default: return <Home />;
-    }
-  };
-
-  const renderFooter = () => {
-    if (view === 'admin') return null;
-    const [email, setEmail] = useState('');
-    const [joined, setJoined] = useState(false);
-    return (
-      <footer className={`${theme.bg} border-t ${theme.border} py-12 px-4 mt-20 transition-colors duration-1000`}>
-        <div className="max-w-7xl mx-auto grid md:grid-cols-2 gap-12 items-center">
-          <div>
-            <h2 className={`text-4xl font-black uppercase tracking-tighter mb-2 ${theme.text}`} style={{ fontFamily: "'Impact', sans-serif" }}>Join The Underground</h2>
-            <p className={`font-mono text-xs mb-6 max-w-sm ${theme.textMuted}`}>No spam. Only restock alerts and secret drops.</p>
-            {joined ? (
-              <div className={`font-bold font-mono text-sm uppercase ${theme.accent} flex items-center gap-2`}><CheckCircle size={16}/> Frequency Logged. Welcome.</div>
-            ) : (
-              <form onSubmit={(e)=>{e.preventDefault(); if(email) setJoined(true);}} className="flex">
-                <input type="email" required value={email} onChange={e=>setEmail(e.target.value)} placeholder="Email Identifier..." className={`bg-transparent border p-3 font-mono outline-none w-64 ${theme.input}`} />
-                <button type="submit" className={`font-bold px-6 uppercase transition-colors ${theme.btnPrimary}`}>Join</button>
-              </form>
-            )}
-          </div>
-          <div className={`text-left md:text-right font-mono text-[10px] space-y-2 ${theme.textMuted}`}>
-            <p className="text-gray-400 text-xs tracking-[0.2em] uppercase mb-4">Darkside - Embrace the light.</p>
-            <p>© 2026 DARKSIDE CLOTHING INDIA.</p>
-            <div className="flex gap-4 md:justify-end mt-4 pt-4 border-t border-gray-500/20">
-               <button onClick={()=>handleNavigate('help')} className="hover:text-white uppercase tracking-widest">Help & FAQs</button>
-               <button className="hover:text-white uppercase tracking-widest">Terms & Conditions</button>
-            </div>
+const Footer = ({ appState }) => {
+  const { view, theme, handleNavigate } = appState;
+  const [email, setEmail] = useState('');
+  const [joined, setJoined] = useState(false);
+  if (view === 'admin' || view === 'profile-setup') return null;
+  return (
+    <footer className={`${theme.bg} border-t ${theme.border} py-12 px-4 mt-20 transition-colors duration-1000`}>
+      <div className="max-w-7xl mx-auto grid md:grid-cols-2 gap-12 items-center">
+        <div>
+          <h2 className={`text-4xl font-black uppercase tracking-tighter mb-2 ${theme.text}`} style={{ fontFamily: "'Impact', sans-serif" }}>Join The Underground</h2>
+          <p className={`font-mono text-xs mb-6 max-w-sm ${theme.textMuted}`}>No spam. Only restock alerts and secret drops.</p>
+          {joined ? (
+            <div className={`font-bold font-mono text-sm uppercase ${theme.accent} flex items-center gap-2`}><CheckCircle size={16}/> Frequency Logged. Welcome.</div>
+          ) : (
+            <form onSubmit={(e)=>{e.preventDefault(); if(email) setJoined(true);}} className="flex">
+              <input type="email" required value={email} onChange={e=>setEmail(e.target.value)} placeholder="Email Identifier..." className={`bg-transparent border p-3 font-mono outline-none w-64 ${theme.input}`} />
+              <button type="submit" className={`font-bold px-6 uppercase transition-colors ${theme.btnPrimary}`}>Join</button>
+            </form>
+          )}
+        </div>
+        <div className={`text-left md:text-right font-mono text-[10px] space-y-2 ${theme.textMuted}`}>
+          <p className="text-gray-400 text-xs tracking-[0.2em] uppercase mb-4">Darkside - Embrace the light.</p>
+          <p>© 2026 DARKSIDE CLOTHING INDIA.</p>
+          <div className="flex gap-4 md:justify-end mt-4 pt-4 border-t border-gray-500/20">
+             <button onClick={()=>handleNavigate('help')} className="hover:text-white uppercase tracking-widest">Help & FAQs</button>
+             <button className="hover:text-white uppercase tracking-widest">Terms & Conditions</button>
           </div>
         </div>
-      </footer>
-    );
+      </div>
+    </footer>
+  );
+};
+
+// --- RENDER CONTENT CONTROLLER ---
+const AppContent = ({ appState }) => {
+  const { view, selectedProduct } = appState;
+  if (selectedProduct) return <ProductDetail appState={appState} />;
+  switch(view) {
+    case 'home': return <Home appState={appState} />;
+    case 'shop': return <Shop appState={appState} />;
+    case 'account': return <Account appState={appState} />;
+    case 'profile-setup': return <ProfileSetup appState={appState} />;
+    case 'auth': return <AuthView appState={appState} />;
+    case 'checkout': return <CheckoutView appState={appState} />;
+    case 'vault': return <Vault appState={appState} />;
+    case 'help': return <HelpCenter appState={appState} />;
+    case 'admin': return <AdminPanel appState={appState} />;
+    default: return <Home appState={appState} />;
+  }
+};
+
+// --- MAIN APP COMPONENT ---
+export default function App() {
+  const [view, setView] = useState('home');
+  const [cart, setCart] = useState([]);
+  const [wishlist, setWishlist] = useState([]);
+  const [products, setProducts] = useState(INITIAL_PRODUCTS);
+  const [isCartOpen, setIsCartOpen] = useState(false);
+  const [showSizeAI, setShowSizeAI] = useState(false);
+  const [showVibeMatcher, setShowVibeMatcher] = useState(false);
+  const [selectedProduct, setSelectedProduct] = useState(null);
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  const [shopCategory, setShopCategory] = useState('All Categories');
+  const [user, setUser] = useState(null);
+  const [isFlashing, setIsFlashing] = useState(false);
+
+  const isLight = view !== 'home' && view !== 'admin' && view !== 'profile-setup';
+  
+  const theme = {
+    bg: isLight ? 'bg-white' : 'bg-[#050505]',
+    text: isLight ? 'text-black' : 'text-white',
+    textMuted: isLight ? 'text-gray-600' : 'text-gray-400',
+    border: isLight ? 'border-black/10' : 'border-white/10',
+    card: isLight ? 'bg-gray-100' : 'bg-[#0A0A0A]',
+    input: isLight ? 'bg-white border-black/20 text-black focus:border-[#8A2BE2]' : 'bg-black border-white/20 text-white focus:border-[#CCFF00]',
+    btnPrimary: isLight ? 'bg-black text-white hover:bg-[#8A2BE2]' : 'bg-[#CCFF00] text-black hover:bg-white',
+    accent: isLight ? 'text-[#8A2BE2]' : 'text-[#CCFF00]',
+    accentHover: isLight ? 'hover:text-[#8A2BE2]' : 'hover:text-[#CCFF00]',
+  };
+
+  const cartTotal = cart.reduce((sum, item) => sum + item.price, 0);
+  const freeShippingThreshold = 5000;
+  const progressToFreeShipping = Math.min((cartTotal / freeShippingThreshold) * 100, 100);
+
+  useEffect(() => {
+    if (isCartOpen || showSizeAI || showVibeMatcher || isMobileMenuOpen) {
+      document.body.style.overflow = 'hidden';
+    } else {
+      document.body.style.overflow = 'unset';
+    }
+    return () => { document.body.style.overflow = 'unset'; };
+  }, [isCartOpen, showSizeAI, showVibeMatcher, isMobileMenuOpen]);
+
+  useEffect(() => {
+    window.history.replaceState({ view: 'home', product: null }, '');
+    const handlePopState = (e) => {
+      if (e.state) {
+        setView(e.state.view || 'home');
+        if (e.state.product) {
+          const prod = products.find(p => p.id === e.state.product);
+          setSelectedProduct(prod || null);
+        } else { setSelectedProduct(null); }
+        setIsCartOpen(false); setShowSizeAI(false); setShowVibeMatcher(false); setIsMobileMenuOpen(false);
+      } else { setView('home'); setSelectedProduct(null); }
+    };
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, [products]);
+
+  useEffect(() => {
+    const initAuth = async () => {
+      if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+        await signInWithCustomToken(auth, __initial_auth_token);
+      } else {
+        try { await signInAnonymously(auth); } catch (e) { console.error("Auth error:", e); }
+      }
+    };
+    initAuth();
+
+    const unsubscribe = onAuthStateChanged(auth, async (u) => {
+      setUser(u);
+      if (u) {
+        try {
+          const docSnap = await getDoc(doc(db, 'artifacts', appId, 'users', u.uid, 'userdata', 'state'));
+          if (docSnap.exists()) {
+            const data = docSnap.data();
+            if (data.cart) setCart(data.cart);
+            if (data.wishlist) setWishlist(data.wishlist);
+          }
+        } catch (err) { console.error("Error fetching user data", err); }
+      }
+    });
+    return () => unsubscribe();
+  }, []);
+
+  const handleNavigate = (newView) => {
+    setView(newView); setSelectedProduct(null); setIsMobileMenuOpen(false); window.scrollTo(0, 0);
+    window.history.pushState({ view: newView, product: null }, '', '#' + newView);
+  };
+
+  const openProduct = (product) => {
+    setSelectedProduct(product); window.scrollTo(0, 0);
+    window.history.pushState({ view: view, product: product.id }, '', '#product-' + product.id);
+  };
+
+  const saveUserData = async (newCart, newWishlist) => {
+    if (!user) return;
+    try { await setDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'userdata', 'state'), { cart: newCart, wishlist: newWishlist }, { merge: true }); } catch(e) {}
+  };
+
+  const enterVault = () => {
+    if (typeof navigator !== 'undefined' && navigator.vibrate) navigator.vibrate([200, 50, 200]);
+    setIsFlashing(true);
+    setTimeout(() => { handleNavigate('shop'); setTimeout(() => { setIsFlashing(false); }, 100); }, 500);
+  };
+
+  const toggleWishlist = (product) => {
+    let newWishlist = wishlist.find(item => item.id === product.id) ? wishlist.filter(item => item.id !== product.id) : [...wishlist, product];
+    setWishlist(newWishlist); saveUserData(cart, newWishlist);
+  };
+  
+  const addToCart = (product) => { const newCart = [...cart, product]; setCart(newCart); setIsCartOpen(true); saveUserData(newCart, wishlist); };
+  const removeFromCart = (index) => { const newCart = cart.filter((_, i) => i !== index); setCart(newCart); saveUserData(newCart, wishlist); };
+
+  const appState = {
+    view, setView, cart, setCart, wishlist, setWishlist, products, setProducts,
+    isCartOpen, setIsCartOpen, showSizeAI, setShowSizeAI, showVibeMatcher, setShowVibeMatcher,
+    selectedProduct, setSelectedProduct, isMobileMenuOpen, setIsMobileMenuOpen,
+    shopCategory, setShopCategory, user, setUser, isFlashing, setIsFlashing,
+    isLight, theme, cartTotal, freeShippingThreshold, progressToFreeShipping,
+    handleNavigate, openProduct, enterVault, toggleWishlist, addToCart, removeFromCart, saveUserData
   };
 
   return (
@@ -1049,12 +981,16 @@ export default function App() {
       {/* BLINDING FLASH OVERLAY */}
       <div className={`fixed inset-0 bg-white z-[9999] pointer-events-none transition-opacity duration-500 ease-in-out ${isFlashing ? 'opacity-100' : 'opacity-0'}`} aria-hidden="true" />
 
-      {view !== 'admin' && <CustomCursor />}
-      <Navbar />
-      <main className="relative z-10">{renderContent()}</main>
+      {view !== 'admin' && view !== 'profile-setup' && <CustomCursor />}
+      
+      <Navbar appState={appState} />
+      
+      <main className="relative z-10">
+        <AppContent appState={appState} />
+      </main>
 
-      {showSizeAI && <SizePredictor />}
-      {showVibeMatcher && <VibeMatcher />}
+      {showSizeAI && <SizePredictor appState={appState} />}
+      {showVibeMatcher && <VibeMatcher appState={appState} />}
 
       {/* SLIDE OUT CART */}
       {isCartOpen && (
@@ -1080,7 +1016,7 @@ export default function App() {
         </div>
       )}
 
-      {renderFooter()}
+      <Footer appState={appState} />
     </div>
   );
 }
