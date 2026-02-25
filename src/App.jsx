@@ -4,7 +4,8 @@ import {
   User, Zap, Crosshair, Smartphone, ChevronRight,
   ShieldCheck, Truck, Fingerprint, Sparkles, Loader2,
   LayoutDashboard, Package, Users, Activity, Plus, Trash2,
-  Box, BarChart, Tag, AlertTriangle, Settings, FileText, Lock
+  Box, BarChart, Tag, AlertTriangle, Settings, FileText, Lock,
+  ArrowLeft, Star, Ruler, ChevronDown, ChevronUp, RefreshCw
 } from 'lucide-react';
 
 import { initializeApp } from 'firebase/app';
@@ -94,6 +95,53 @@ export default function App() {
     accentHover: isLight ? 'hover:text-[#8A2BE2]' : 'hover:text-[#CCFF00]',
   };
 
+  // --- BROWSER HISTORY / MOBILE GESTURE INTEGRATION ---
+  useEffect(() => {
+    // Initialize base history state
+    window.history.replaceState({ view: 'home', product: null }, '');
+    
+    const handlePopState = (e) => {
+      if (e.state) {
+        setView(e.state.view || 'home');
+        if (e.state.product) {
+          const prod = products.find(p => p.id === e.state.product);
+          setSelectedProduct(prod || null);
+        } else {
+          setSelectedProduct(null);
+        }
+        setIsCartOpen(false);
+        setShowSizeAI(false);
+        setShowVibeMatcher(false);
+      } else {
+        // Fallback for native back button if state gets lost
+        setView('home');
+        setSelectedProduct(null);
+      }
+    };
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, [products]);
+
+  const handleNavigate = (newView) => {
+    setView(newView); 
+    setSelectedProduct(null); 
+    setIsMobileMenuOpen(false); 
+    window.scrollTo(0, 0);
+    // Push state so back button works
+    window.history.pushState({ view: newView, product: null }, '', '#' + newView);
+  };
+
+  const openProduct = (product) => {
+    setSelectedProduct(product);
+    window.scrollTo(0, 0);
+    window.history.pushState({ view: view, product: product.id }, '', '#product-' + product.id);
+  };
+
+  const closeProduct = () => {
+    window.history.back(); // Triggers popstate, safely clearing selectedProduct
+  };
+  // ----------------------------------------------------
+
   useEffect(() => {
     const initAuth = async () => {
       if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
@@ -127,14 +175,13 @@ export default function App() {
     } catch(e) { console.error("Error saving to DB", e); }
   };
 
-  const handleNavigate = (newView) => {
-    setView(newView); setSelectedProduct(null); setIsMobileMenuOpen(false); window.scrollTo(0, 0);
-  };
-
   const enterVault = () => {
     if (typeof navigator !== 'undefined' && navigator.vibrate) navigator.vibrate([200, 50, 200]);
     setIsFlashing(true);
-    setTimeout(() => { handleNavigate('shop'); setTimeout(() => { setIsFlashing(false); }, 100); }, 500);
+    setTimeout(() => { 
+      handleNavigate('shop'); 
+      setTimeout(() => { setIsFlashing(false); }, 100); 
+    }, 500);
   };
 
   const toggleWishlist = (product) => {
@@ -323,28 +370,135 @@ export default function App() {
     );
   };
 
-  const ProductDetail = () => (
-    <div className="pt-24 pb-12 px-4 max-w-7xl mx-auto min-h-screen">
-       <button onClick={() => setSelectedProduct(null)} className={`${theme.textMuted} hover:${theme.text} font-mono text-sm mb-8 flex items-center gap-2 uppercase`}><X size={16} /> Back to Catalog</button>
-       <div className="grid md:grid-cols-2 gap-12">
-         <div className={`aspect-[3/4] ${theme.card} border ${theme.border} relative overflow-hidden group`}><img src={selectedProduct.image} className="w-full h-full object-cover grayscale group-hover:grayscale-0 transition-all duration-700" alt={selectedProduct.name} /><div className="absolute inset-0 bg-gradient-to-t from-black/80 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500 flex items-end p-6"><p className={`font-mono text-xs ${theme.accent}`}>RAW MATERIALS // PREMIUM HEAVYWEIGHT FABRIC</p></div></div>
-         <div className="flex flex-col justify-center">
-           {selectedProduct.badge && <span className={`${isLight ? 'bg-black text-white' : 'bg-[#CCFF00] text-black'} text-[10px] font-bold px-2 py-1 uppercase w-max mb-4`}>{selectedProduct.badge}</span>}
-           <h1 className={`text-5xl font-black uppercase tracking-tighter mb-4 ${theme.text}`} style={{ fontFamily: "'Impact', sans-serif" }}>{selectedProduct.name}</h1>
-           <p className={`text-3xl font-mono mb-8 ${isLight ? 'text-black font-extrabold' : 'text-[#E5E5E5]'}`}>₹{selectedProduct.price}</p>
-           <div className={`border-t ${theme.border} py-6 mb-8`}>
-             <div className="flex justify-between items-center mb-4"><span className={`font-bold uppercase tracking-widest text-sm ${theme.text}`}>Select Size</span><button onClick={() => setShowSizeAI(true)} className="text-[#8A2BE2] flex items-center gap-1 font-mono text-xs hover:underline cursor-pointer"><Crosshair size={14} /> Find My Fit</button></div>
-             <div className="flex gap-4">{['S', 'M', 'L', 'XL'].map(s => <button key={s} className={`w-12 h-12 border font-mono transition-colors ${isLight ? 'border-black/20 text-black hover:border-[#8A2BE2] hover:text-[#8A2BE2] focus:border-[#8A2BE2] focus:bg-[#8A2BE2]/10' : 'border-white/20 text-white hover:border-[#CCFF00] hover:text-[#CCFF00] focus:border-[#CCFF00] focus:bg-[#CCFF00]/10'}`}>{s}</button>)}</div>
+  // --- REDESIGNED PRODUCT DETAIL PAGE ---
+  const ProductDetail = () => {
+    const [activeTab, setActiveTab] = useState('desc'); // 'desc' or 'ship'
+    
+    return (
+      <div className="pt-24 pb-32 md:pb-12 px-4 max-w-7xl mx-auto min-h-screen">
+         {/* History Back integration */}
+         <button onClick={closeProduct} className={`${theme.textMuted} hover:${theme.text} font-mono text-xs mb-8 flex items-center gap-2 uppercase tracking-widest transition-colors`}>
+           <ArrowLeft size={16} /> Back to Catalog
+         </button>
+         
+         <div className="grid md:grid-cols-2 gap-12 items-start">
+           
+           {/* Enhanced Gallery Layout */}
+           <div className="space-y-4 sticky top-24">
+             <div className={`aspect-[4/5] ${theme.card} border ${theme.border} relative overflow-hidden group w-full`}>
+               {/* No Grayscale on PDP - Full vibrancy instantly */}
+               <img src={selectedProduct.image} className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-105" alt={selectedProduct.name} />
+               {selectedProduct.badge && (
+                 <div className={`absolute top-4 left-4 text-[10px] font-bold px-3 py-1 uppercase tracking-widest ${isLight ? 'bg-black text-white' : 'bg-[#CCFF00] text-black'}`}>
+                   {selectedProduct.badge}
+                 </div>
+               )}
+             </div>
+             {/* Thumbnail row */}
+             <div className="grid grid-cols-3 gap-4 hidden md:grid">
+                {[1,2,3].map(i => (
+                  <div key={i} className={`aspect-square ${theme.card} border ${theme.border} cursor-pointer hover:border-gray-400 overflow-hidden`}>
+                     <img src={selectedProduct.image} className="w-full h-full object-cover opacity-70 hover:opacity-100 transition-opacity" />
+                  </div>
+                ))}
+             </div>
            </div>
-           <div className="flex gap-4 mb-8">
-             <button onClick={() => addToCart(selectedProduct)} className={`flex-1 font-bold py-5 uppercase tracking-widest transition-colors ${theme.btnPrimary}`}>Add To Cart</button>
-             <button onClick={() => toggleWishlist(selectedProduct)} className={`w-16 flex items-center justify-center border transition-colors ${isLight ? 'border-black/20 text-black hover:border-[#8A2BE2] hover:text-[#8A2BE2]' : 'border-white/20 text-white hover:border-[#8A2BE2] hover:text-[#8A2BE2]'}`}><Heart fill={wishlist.find(i => i.id === selectedProduct.id) ? "#8A2BE2" : "none"} /></button>
+           
+           {/* Details Section */}
+           <div className="flex flex-col">
+             
+             {/* Header */}
+             <div className="mb-6 border-b border-gray-200 pb-6">
+               <div className="flex items-center gap-2 mb-3">
+                 <div className="flex text-[#8A2BE2] drop-shadow-sm">
+                    {[1,2,3,4,5].map(star => <Star key={star} size={14} fill="currentColor" />)}
+                 </div>
+                 <span className={`text-xs font-mono ${theme.textMuted}`}>(128 Reviews)</span>
+               </div>
+               <h1 className={`text-4xl md:text-5xl font-black uppercase tracking-tighter mb-4 ${theme.text}`} style={{ fontFamily: "'Impact', sans-serif" }}>
+                 {selectedProduct.name}
+               </h1>
+               <p className={`text-3xl font-mono ${isLight ? 'text-black font-extrabold' : 'text-[#E5E5E5]'}`}>₹{selectedProduct.price}</p>
+             </div>
+             
+             {/* Sizing */}
+             <div className="mb-8">
+               <div className="flex justify-between items-center mb-4">
+                 <span className={`font-bold uppercase tracking-widest text-sm ${theme.text}`}>Select Size</span>
+                 <button onClick={() => setShowSizeAI(true)} className="text-[#8A2BE2] flex items-center gap-2 font-mono text-xs hover:underline cursor-pointer">
+                   <Ruler size={14} /> Size Guide
+                 </button>
+               </div>
+               <div className="grid grid-cols-4 gap-4">
+                 {['S', 'M', 'L', 'XL'].map(s => (
+                   <button key={s} className={`h-14 border font-mono text-lg transition-colors ${isLight ? 'border-black/20 text-black hover:border-black hover:bg-black/5 focus:border-black focus:bg-black focus:text-white' : 'border-white/20 text-white hover:border-[#CCFF00] hover:text-[#CCFF00] focus:border-[#CCFF00] focus:bg-[#CCFF00]/10'}`}>
+                     {s}
+                   </button>
+                 ))}
+               </div>
+             </div>
+  
+             {/* Desktop Add to Cart */}
+             <div className="hidden md:flex gap-4 mb-10">
+               <button onClick={() => addToCart(selectedProduct)} className={`flex-1 font-black py-5 uppercase tracking-[0.2em] text-sm transition-colors ${theme.btnPrimary} relative overflow-hidden group`}>
+                 <div className="absolute inset-0 bg-white/20 translate-y-full group-hover:translate-y-0 transition-transform duration-300 ease-in-out z-0"></div>
+                 <span className="relative z-10 flex items-center justify-center gap-2"><ShoppingBag size={18} /> Add To Cart</span>
+               </button>
+               <button onClick={() => toggleWishlist(selectedProduct)} className={`w-16 flex items-center justify-center border transition-colors ${isLight ? 'border-black/20 text-black hover:border-black' : 'border-white/20 text-white hover:border-[#8A2BE2]'}`}>
+                 <Heart fill={wishlist.find(i => i.id === selectedProduct.id) ? (isLight ? "#000" : "#8A2BE2") : "none"} />
+               </button>
+             </div>
+  
+             {/* Enhanced Info Accordions */}
+             <div className="space-y-4">
+                {/* Details Tab */}
+                <div className={`border ${theme.border} ${theme.card}`}>
+                   <button onClick={() => setActiveTab(activeTab === 'desc' ? '' : 'desc')} className="w-full flex justify-between items-center p-4 font-bold uppercase tracking-widest text-sm">
+                      Product Details {activeTab === 'desc' ? <ChevronUp size={16}/> : <ChevronDown size={16}/>}
+                   </button>
+                   {activeTab === 'desc' && (
+                      <div className={`p-4 pt-0 text-sm font-mono leading-relaxed ${theme.textMuted}`}>
+                         {selectedProduct.description || "Forged for the urban dystopia. This piece features advanced construction and proprietary fabric blends engineered to withstand high-friction environments."}
+                         <ul className="mt-4 space-y-2 text-xs">
+                            <li className="flex items-center gap-2"><div className="w-1 h-1 bg-[#8A2BE2] rounded-full"></div> 100% Premium Heavyweight Cotton</li>
+                            <li className="flex items-center gap-2"><div className="w-1 h-1 bg-[#8A2BE2] rounded-full"></div> Oversized drop-shoulder fit</li>
+                            <li className="flex items-center gap-2"><div className="w-1 h-1 bg-[#8A2BE2] rounded-full"></div> Acid-washed by hand</li>
+                         </ul>
+                      </div>
+                   )}
+                </div>
+                
+                {/* Shipping Tab */}
+                <div className={`border ${theme.border} ${theme.card}`}>
+                   <button onClick={() => setActiveTab(activeTab === 'ship' ? '' : 'ship')} className="w-full flex justify-between items-center p-4 font-bold uppercase tracking-widest text-sm">
+                      Shipping & Returns {activeTab === 'ship' ? <ChevronUp size={16}/> : <ChevronDown size={16}/>}
+                   </button>
+                   {activeTab === 'ship' && (
+                      <div className={`p-4 pt-0 text-xs font-mono space-y-3 ${theme.textMuted}`}>
+                         <p className="flex items-center gap-2"><Truck size={14} className={theme.accent} /> Express Pan-India delivery within 48-72 hours.</p>
+                         <p className="flex items-center gap-2"><RefreshCw size={14} className="text-[#8A2BE2]" /> 7-day hassle-free returns. No questions asked.</p>
+                      </div>
+                   )}
+                </div>
+             </div>
+             
            </div>
-           <div className={`${theme.card} border ${theme.border} p-4 grid grid-cols-2 gap-4`}><div className={`flex items-center gap-3 font-mono text-[10px] ${theme.textMuted}`}><ShieldCheck size={16} className={theme.accent} /> 100% SECURE CHECKOUT</div><div className={`flex items-center gap-3 font-mono text-[10px] ${theme.textMuted}`}><Truck size={16} className={theme.accent} /> 48H METRO DELIVERY</div></div>
          </div>
-       </div>
-    </div>
-  );
+         
+         {/* Mobile Sticky Add to Cart Bar */}
+         <div className={`fixed bottom-0 left-0 right-0 p-4 ${isLight ? 'bg-white/90 border-black/10' : 'bg-black/90 border-white/10'} backdrop-blur-md border-t md:hidden z-40 transform transition-transform`}>
+            <div className="flex gap-2">
+              <button onClick={() => toggleWishlist(selectedProduct)} className={`w-14 flex items-center justify-center border transition-colors ${isLight ? 'border-black/20 text-black hover:border-black' : 'border-white/20 text-white hover:border-[#8A2BE2]'}`}>
+                <Heart fill={wishlist.find(i => i.id === selectedProduct.id) ? (isLight ? "#000" : "#8A2BE2") : "none"} />
+              </button>
+              <button onClick={() => addToCart(selectedProduct)} className={`flex-1 font-black py-4 uppercase tracking-widest flex justify-center items-center gap-2 ${theme.btnPrimary}`}>
+                 <ShoppingBag size={18} /> ₹{selectedProduct.price}
+              </button>
+            </div>
+         </div>
+      </div>
+    );
+  };
 
   const Home = () => (
     <>
@@ -389,11 +543,11 @@ export default function App() {
         </div>
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-8">
         {filteredProducts.map(product => (
-          <div key={product.id} className="group cursor-pointer" onClick={() => setSelectedProduct(product)}>
+          <div key={product.id} className="group cursor-pointer" onClick={() => openProduct(product)}>
             <div className={`relative aspect-[3/4] ${theme.card} overflow-hidden border ${isLight ? 'border-black/5 group-hover:border-black/50' : 'border-white/5 group-hover:border-[#CCFF00]/50'} transition-colors mb-4`}>
-              <img src={product.image} alt={product.name} className="w-full h-full object-cover grayscale opacity-80 group-hover:grayscale-0 group-hover:opacity-100 group-hover:scale-105 transition-all duration-500" />
+              {/* Removed Grayscale filter for instant vibrancy */}
+              <img src={product.image} alt={product.name} className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-105" />
               {product.badge && <div className={`absolute top-4 left-4 text-[10px] font-bold px-2 py-1 uppercase mix-blend-screen ${isLight ? 'bg-black text-white' : 'bg-white text-black'}`}>{product.badge}</div>}
-              <div className="absolute inset-0 bg-[#8A2BE2] mix-blend-overlay opacity-0 group-hover:opacity-20 transition-opacity"></div>
             </div>
             <div className="flex justify-between items-start">
               <div><h3 className={`font-bold uppercase tracking-wider text-sm mb-1 transition-colors ${theme.text} group-hover:text-[#8A2BE2]`}>{product.name}</h3><p className={`font-mono text-xs ${theme.textMuted}`}>{product.category}</p></div>
@@ -557,56 +711,37 @@ export default function App() {
     const [ordersError, setOrdersError] = useState(null);
     
     useEffect(() => {
-      // Use signInAnonymously to authenticate before fetching orders to prevent permission denied errors
       const authenticateAndFetch = async () => {
         try {
-          if (!user) {
-             await signInAnonymously(auth);
-          }
+          if (!user) await signInAnonymously(auth);
           const q = query(collection(db, 'artifacts', appId, 'public', 'data', 'orders'));
           const unsub = onSnapshot(q, (snap) => {
             const loaded = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
             loaded.sort((a,b) => new Date(b.createdAt) - new Date(a.createdAt)); 
-            setOrders(loaded);
-            setOrdersError(null);
-          }, (error) => {
-            console.error("Order fetch error", error);
-            setOrdersError(error.message);
-          });
+            setOrders(loaded); setOrdersError(null);
+          }, (error) => { console.error("Order fetch error", error); setOrdersError(error.message); });
           return () => unsub();
-        } catch (authErr) {
-             console.error("Admin Auth Error", authErr);
-             setOrdersError(authErr.message);
-        }
+        } catch (authErr) { console.error("Admin Auth Error", authErr); setOrdersError(authErr.message); }
       }
       authenticateAndFetch();
     }, [user]);
 
-    const updateOrderStatus = async (orderId, newStatus) => {
-      try { await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'orders', orderId), { status: newStatus }); } catch (e) { console.error("Update failed", e); }
-    };
+    const updateOrderStatus = async (orderId, newStatus) => { try { await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'orders', orderId), { status: newStatus }); } catch (e) { console.error("Update failed", e); } };
 
     const totalRevenue = orders.reduce((sum, o) => sum + o.total, 0);
 
     const DronaTabs = [
-      { id: 'dashboard', icon: LayoutDashboard, label: 'Analytics Dashboard' },
-      { id: 'orders', icon: Package, label: 'Fulfillment Tracking' },
-      { id: 'products', icon: Box, label: 'Product & Catalog' },
-      { id: 'inventory', icon: AlertTriangle, label: 'Inventory Alerts' },
-      { id: 'crm', icon: Users, label: 'Customer Relations' },
-      { id: 'marketing', icon: Tag, label: 'Marketing & Promos' },
+      { id: 'dashboard', icon: LayoutDashboard, label: 'Analytics Dashboard' }, { id: 'orders', icon: Package, label: 'Fulfillment Tracking' },
+      { id: 'products', icon: Box, label: 'Product & Catalog' }, { id: 'inventory', icon: AlertTriangle, label: 'Inventory Alerts' },
+      { id: 'crm', icon: Users, label: 'Customer Relations' }, { id: 'marketing', icon: Tag, label: 'Marketing & Promos' },
       { id: 'rbac', icon: ShieldCheck, label: 'RBAC Security' }
     ];
 
     return (
       <div className="min-h-screen bg-[#050505] text-[#E5E5E5] flex flex-col md:flex-row cursor-default font-mono selection:bg-[#CCFF00] selection:text-black">
-        {/* Sidebar */}
         <div className="w-full md:w-72 bg-[#0A0A0A] border-r border-[#333] flex flex-col h-screen sticky top-0">
           <div className="p-6 border-b border-[#333] flex items-center justify-between bg-black">
-            <div>
-              <h1 className="text-2xl font-black uppercase text-[#CCFF00]" style={{ fontFamily: "'Impact', sans-serif" }}>SYS.ADMIN</h1>
-              <p className="text-[10px] text-[#8A2BE2] mt-1">DRONA_HQ SECURE PROTOCOL</p>
-            </div>
+            <div><h1 className="text-2xl font-black uppercase text-[#CCFF00]" style={{ fontFamily: "'Impact', sans-serif" }}>SYS.ADMIN</h1><p className="text-[10px] text-[#8A2BE2] mt-1">DRONA_HQ SECURE PROTOCOL</p></div>
             <button onClick={() => handleNavigate('home')} className="text-gray-500 hover:text-white p-2 border border-[#333] bg-[#0A0A0A]"><LogOut size={14} /></button>
           </div>
           <div className="p-4 space-y-1 flex-1 overflow-y-auto">
@@ -624,15 +759,9 @@ export default function App() {
           </div>
         </div>
 
-        {/* Content Area */}
         <div className="flex-1 p-4 md:p-8 h-screen overflow-y-auto bg-[url('https://www.transparenttextures.com/patterns/cubes.png')] bg-repeat">
           <div className="max-w-6xl mx-auto">
-            
-            {ordersError && (
-              <div className="mb-4 p-4 bg-red-500/10 border border-red-500/30 text-red-500 text-xs">
-                <strong>Warning:</strong> Could not load orders. Permission denied. You might need to authenticate with valid credentials. ({ordersError})
-              </div>
-            )}
+            {ordersError && ( <div className="mb-4 p-4 bg-red-500/10 border border-red-500/30 text-red-500 text-xs"><strong>Warning:</strong> Could not load orders. Permission denied. ({ordersError})</div> )}
 
             {adminView === 'dashboard' && (
               <div className="animate-in fade-in">
@@ -663,11 +792,7 @@ export default function App() {
                     <h3 className="font-bold uppercase text-xs text-white border-b border-[#333] pb-3 mb-4">Live Activity Feed</h3>
                     <div className="space-y-4">
                       {orders.slice(0,4).map(o => (
-                        <div key={o.id} className="flex items-center gap-4 text-xs">
-                          <div className="w-2 h-2 rounded-full bg-[#CCFF00]"></div>
-                          <div className="flex-1"><p className="text-gray-300">Payment of <span className="text-[#CCFF00]">₹{o.total}</span> received.</p></div>
-                          <div className="text-gray-600">Just now</div>
-                        </div>
+                        <div key={o.id} className="flex items-center gap-4 text-xs"><div className="w-2 h-2 rounded-full bg-[#CCFF00]"></div><div className="flex-1"><p className="text-gray-300">Payment of <span className="text-[#CCFF00]">₹{o.total}</span> received.</p></div><div className="text-gray-600">Just now</div></div>
                       ))}
                     </div>
                   </div>
@@ -692,14 +817,8 @@ export default function App() {
                           <td className="p-4">{o.userEmail}</td>
                           <td className="p-4 text-[#CCFF00]">₹{o.total}</td>
                           <td className="p-4 text-gray-500">{new Date(o.createdAt).toLocaleDateString()}</td>
-                          <td className="p-4">
-                            <span className={`px-2 py-1 text-[9px] font-bold uppercase ${o.status === 'PENDING' ? 'bg-yellow-500/10 text-yellow-500 border border-yellow-500/30' : o.status === 'SHIPPED' ? 'bg-[#8A2BE2]/10 text-[#8A2BE2] border border-[#8A2BE2]/30' : 'bg-[#CCFF00]/10 text-[#CCFF00] border border-[#CCFF00]/30'}`}>{o.status}</span>
-                          </td>
-                          <td className="p-4">
-                            <select value={o.status} onChange={(e) => updateOrderStatus(o.id, e.target.value)} className="bg-black border border-[#333] text-white text-[10px] p-2 outline-none focus:border-[#CCFF00] cursor-pointer">
-                              <option value="PENDING">MARK PENDING</option><option value="SHIPPED">MARK SHIPPED</option><option value="DELIVERED">MARK DELIVERED</option>
-                            </select>
-                          </td>
+                          <td className="p-4"><span className={`px-2 py-1 text-[9px] font-bold uppercase ${o.status === 'PENDING' ? 'bg-yellow-500/10 text-yellow-500 border border-yellow-500/30' : o.status === 'SHIPPED' ? 'bg-[#8A2BE2]/10 text-[#8A2BE2] border border-[#8A2BE2]/30' : 'bg-[#CCFF00]/10 text-[#CCFF00] border border-[#CCFF00]/30'}`}>{o.status}</span></td>
+                          <td className="p-4"><select value={o.status} onChange={(e) => updateOrderStatus(o.id, e.target.value)} className="bg-black border border-[#333] text-white text-[10px] p-2 outline-none focus:border-[#CCFF00] cursor-pointer"><option value="PENDING">MARK PENDING</option><option value="SHIPPED">MARK SHIPPED</option><option value="DELIVERED">MARK DELIVERED</option></select></td>
                         </tr>
                       ))}
                       {orders.length === 0 && <tr><td colSpan="6" className="p-8 text-center text-gray-500">NO ORDER DATA FOUND IN SYSTEM.</td></tr>}
@@ -725,9 +844,7 @@ export default function App() {
                           <td className="p-4 flex items-center gap-3"><img src={p.image} className="w-8 h-8 object-cover grayscale" /><span className="font-bold text-white">{p.name}</span></td>
                           <td className="p-4 text-gray-500">DRK-{p.id}00</td>
                           <td className={`p-4 font-bold text-lg ${p.stock === 0 ? 'text-red-500' : p.stock < 5 ? 'text-yellow-500' : 'text-green-500'}`}>{p.stock}</td>
-                          <td className="p-4">
-                            {p.stock === 0 ? <span className="text-[9px] bg-red-500/10 text-red-500 border border-red-500/30 px-2 py-1 uppercase">Out of Stock</span> : p.stock < 5 ? <span className="text-[9px] bg-yellow-500/10 text-yellow-500 border border-yellow-500/30 px-2 py-1 uppercase">Low Alert</span> : <span className="text-[9px] bg-green-500/10 text-green-500 border border-green-500/30 px-2 py-1 uppercase">Healthy</span>}
-                          </td>
+                          <td className="p-4">{p.stock === 0 ? <span className="text-[9px] bg-red-500/10 text-red-500 border border-red-500/30 px-2 py-1 uppercase">Out of Stock</span> : p.stock < 5 ? <span className="text-[9px] bg-yellow-500/10 text-yellow-500 border border-yellow-500/30 px-2 py-1 uppercase">Low Alert</span> : <span className="text-[9px] bg-green-500/10 text-green-500 border border-green-500/30 px-2 py-1 uppercase">Healthy</span>}</td>
                           <td className="p-4"><button className="bg-[#333] text-white px-3 py-1 text-[10px] hover:bg-white hover:text-black">Update Stock</button></td>
                         </tr>
                       ))}
@@ -746,10 +863,7 @@ export default function App() {
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                   {[1,2,3,4,5,6].map(i => (
                     <div key={i} className="bg-[#0A0A0A] border border-[#333] p-5">
-                      <div className="flex items-center gap-3 border-b border-[#333] pb-3 mb-3">
-                        <div className="w-10 h-10 bg-[#111] border border-[#333] flex items-center justify-center font-bold text-white">U{i}</div>
-                        <div><p className="text-sm font-bold text-white uppercase">USER_00{i}</p><p className="text-[10px] text-gray-500">user{i}@cyber.net</p></div>
-                      </div>
+                      <div className="flex items-center gap-3 border-b border-[#333] pb-3 mb-3"><div className="w-10 h-10 bg-[#111] border border-[#333] flex items-center justify-center font-bold text-white">U{i}</div><div><p className="text-sm font-bold text-white uppercase">USER_00{i}</p><p className="text-[10px] text-gray-500">user{i}@cyber.net</p></div></div>
                       <div className="flex justify-between text-xs mb-1"><span className="text-gray-500">Total Spent:</span><span className="text-[#CCFF00]">₹{(Math.random() * 20000).toFixed(0)}</span></div>
                       <div className="flex justify-between text-xs mb-4"><span className="text-gray-500">Orders:</span><span className="text-white">{Math.floor(Math.random() * 5) + 1}</span></div>
                       <button className="w-full text-center border border-[#333] py-2 text-[10px] uppercase text-gray-400 hover:text-white hover:bg-[#333]">View Full Profile</button>
@@ -805,24 +919,17 @@ export default function App() {
               </div>
             )}
 
-            {/* Products Fallback (from previous) */}
             {adminView === 'products' && (
               <div className="animate-in fade-in">
                 <div className="flex justify-between items-end mb-8 border-b border-[#333] pb-4">
                   <div><h2 className="text-2xl font-black uppercase text-white">Product & Catalog</h2><p className="text-xs text-gray-500 mt-1">Add, edit, or delete store items</p></div>
                 </div>
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-                  <div className="border border-[#333] border-dashed flex flex-col items-center justify-center p-8 cursor-pointer hover:border-[#CCFF00] hover:text-[#CCFF00] text-gray-500 transition-colors bg-[#0A0A0A]">
-                    <Plus size={32} className="mb-2" /><span className="uppercase text-xs font-bold">Inject Product</span>
-                  </div>
+                  <div className="border border-[#333] border-dashed flex flex-col items-center justify-center p-8 cursor-pointer hover:border-[#CCFF00] hover:text-[#CCFF00] text-gray-500 transition-colors bg-[#0A0A0A]"><Plus size={32} className="mb-2" /><span className="uppercase text-xs font-bold">Inject Product</span></div>
                   {products.map(p => (
                     <div key={p.id} className="bg-[#0A0A0A] border border-[#333] flex flex-col group relative">
                       <img src={p.image} className="h-40 w-full object-cover grayscale opacity-50 group-hover:opacity-100 group-hover:grayscale-0 transition-all" />
-                      <div className="p-4 flex-1 flex flex-col">
-                        <h4 className="font-bold text-white uppercase text-xs">{p.name}</h4>
-                        <p className="text-[10px] text-gray-500 mb-2">{p.category}</p>
-                        <p className="text-[#CCFF00] mt-auto text-sm font-bold">₹{p.price}</p>
-                      </div>
+                      <div className="p-4 flex-1 flex flex-col"><h4 className="font-bold text-white uppercase text-xs">{p.name}</h4><p className="text-[10px] text-gray-500 mb-2">{p.category}</p><p className="text-[#CCFF00] mt-auto text-sm font-bold">₹{p.price}</p></div>
                       <button onClick={()=>setProducts(products.filter(pr => pr.id !== p.id))} className="absolute top-2 right-2 bg-red-500 text-white p-2 opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-600"><Trash2 size={12}/></button>
                     </div>
                   ))}
@@ -836,7 +943,6 @@ export default function App() {
     );
   };
   
-  // Icon fallback for Admin logout
   const LogOut = ({size}) => <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path><polyline points="16 17 21 12 16 7"></polyline><line x1="21" y1="12" x2="9" y2="12"></line></svg>;
 
   const renderContent = () => {
