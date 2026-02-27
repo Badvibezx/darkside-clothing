@@ -6,7 +6,7 @@ import {
   LayoutDashboard, Package, Users, Activity, Plus, Trash2,
   Box, Tag, AlertTriangle, MessageSquare, Lock,
   ArrowLeft, Star, Ruler, ChevronDown, ChevronUp, RefreshCw,
-  AlertOctagon, CheckCircle, HelpCircle, Mail, MapPin, Settings as SettingsIcon, LogOut as LogOutIcon
+  AlertOctagon, CheckCircle, HelpCircle, Mail, MapPin, Settings as SettingsIcon, LogOut as LogOutIcon, ChevronRight as ChevronRightIcon
 } from 'lucide-react';
 
 import { initializeApp } from 'firebase/app';
@@ -378,9 +378,10 @@ const ProfileSetup = ({ appState }) => {
   );
 };
 
+// --- REDESIGNED MYNTRA-STYLE ACCOUNT PAGE ---
 const Account = ({ appState }) => {
   const { theme, isLight, user, setUser, handleNavigate } = appState;
-  const [activeTab, setActiveTab] = useState('orders');
+  const [activeTab, setActiveTab] = useState('menu'); // 'menu', 'orders', 'addresses', 'settings'
   const [myOrders, setMyOrders] = useState([]);
   const [addrForm, setAddrForm] = useState({ address: '', city: '', state: '', pin: '' });
   const [savedAddr, setSavedAddr] = useState(null);
@@ -412,83 +413,132 @@ const Account = ({ appState }) => {
   const handleUpdateProfile = async (e) => {
     e.preventDefault();
     if(!updateName) return;
-    try { await updateProfile(auth.currentUser, { displayName: updateName, photoURL: updateAvatar }); setUser({...auth.currentUser, displayName: updateName, photoURL: updateAvatar}); alert("Profile Update Complete."); } catch(err) { alert("Update Failed."); }
+    try { await updateProfile(auth.currentUser, { displayName: updateName, photoURL: updateAvatar }); setUser({...auth.currentUser, displayName: updateName, photoURL: updateAvatar}); alert("Profile Update Complete."); setActiveTab('menu'); } catch(err) { alert("Update Failed."); }
   };
 
+  const handleLogout = () => { signOut(auth).then(()=>handleNavigate('home')); };
+
+  // Menu View (Myntra Style Grid)
+  if (activeTab === 'menu') {
+    return (
+      <div className="pt-24 px-4 max-w-4xl mx-auto min-h-screen pb-20 font-mono">
+        <h2 className={`text-4xl font-black uppercase tracking-tighter mb-8 ${theme.text}`} style={{ fontFamily: "'Impact', sans-serif" }}>Account</h2>
+        
+        {/* Profile Overview Card */}
+        <div className={`${theme.card} border ${theme.border} p-6 flex items-center gap-6 mb-8`}>
+          {user?.photoURL ? (
+             <img src={user.photoURL} alt="Profile" className={`w-20 h-20 md:w-24 md:h-24 rounded-full object-cover border-2 ${theme.border}`} />
+          ) : (
+             <div className={`w-20 h-20 md:w-24 md:h-24 rounded-full flex items-center justify-center font-black text-3xl md:text-4xl ${isLight ? 'bg-black text-white' : 'bg-[#CCFF00] text-black'}`}>
+               {user?.displayName ? user.displayName.charAt(0).toUpperCase() : (user?.email ? user.email.charAt(0).toUpperCase() : 'A')}
+             </div>
+          )}
+          <div>
+            <h3 className={`text-xl md:text-2xl font-bold uppercase ${theme.text}`}>{user?.displayName || 'OPERATIVE'}</h3>
+            <p className={`text-xs md:text-sm mt-1 ${theme.textMuted}`}>{user?.email || user?.phoneNumber}</p>
+            <p className="inline-block mt-3 text-[#8A2BE2] text-[10px] md:text-xs font-bold bg-[#8A2BE2]/10 px-3 py-1 rounded-full border border-[#8A2BE2]/30">
+              {user?.isAnonymous ? 'GUEST TIER' : 'INSIDER TIER'}
+            </p>
+          </div>
+        </div>
+
+        {/* Options Grid */}
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          <button onClick={()=>setActiveTab('orders')} className={`${theme.card} border ${theme.border} p-6 text-left hover:border-[#8A2BE2] transition-colors group flex flex-col justify-between h-32`}>
+             <div className="flex items-center gap-3 mb-2"><Package className={theme.text} size={24} /> <span className={`font-bold uppercase ${theme.text}`}>Orders</span></div>
+             <p className={`text-xs ${theme.textMuted} group-hover:${theme.text}`}>Check your transmission history and fulfillment status.</p>
+          </button>
+          
+          <button onClick={()=>setActiveTab('addresses')} className={`${theme.card} border ${theme.border} p-6 text-left hover:border-[#8A2BE2] transition-colors group flex flex-col justify-between h-32`}>
+             <div className="flex items-center gap-3 mb-2"><MapPin className={theme.text} size={24} /> <span className={`font-bold uppercase ${theme.text}`}>Addresses</span></div>
+             <p className={`text-xs ${theme.textMuted} group-hover:${theme.text}`}>Save drop coordinates for seamless rapid checkout.</p>
+          </button>
+          
+          <button onClick={()=>setActiveTab('settings')} className={`${theme.card} border ${theme.border} p-6 text-left hover:border-[#8A2BE2] transition-colors group flex flex-col justify-between h-32`}>
+             <div className="flex items-center gap-3 mb-2"><SettingsIcon className={theme.text} size={24} /> <span className={`font-bold uppercase ${theme.text}`}>Profile Details</span></div>
+             <p className={`text-xs ${theme.textMuted} group-hover:${theme.text}`}>Modify your identity, operative name, and avatar.</p>
+          </button>
+
+          <button onClick={handleLogout} className={`${theme.card} border ${theme.border} p-6 text-left hover:border-red-500 hover:bg-red-500/5 transition-colors group flex flex-col justify-between h-32 md:col-span-2 lg:col-span-3`}>
+             <div className="flex items-center gap-3 mb-2 text-red-500"><LogOutIcon size={24} /> <span className="font-bold uppercase">Logout</span></div>
+             <p className="text-xs text-red-500/70 group-hover:text-red-500">Disconnect from the neural net and exit terminal.</p>
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // Sub-Views (Orders, Addresses, Settings)
   return (
-    <div className="pt-24 px-4 max-w-6xl mx-auto min-h-screen pb-20">
-      <h2 className={`text-4xl md:text-5xl font-black uppercase tracking-tighter mb-8 ${theme.text}`} style={{ fontFamily: "'Impact', sans-serif" }}>Command Center</h2>
-      <div className="grid md:grid-cols-4 gap-8 items-start">
-        <div className="col-span-1 space-y-4 sticky top-24">
-          <div className={`${theme.card} border ${theme.border} p-6 flex flex-col items-center text-center`}>
-            {user?.photoURL ? (<img src={user.photoURL} alt="Profile" className={`w-24 h-24 rounded-full object-cover mb-4 border-2 ${theme.border}`} />) : (<div className={`w-24 h-24 rounded-full flex items-center justify-center font-black text-4xl mb-4 ${isLight ? 'bg-black text-white' : 'bg-[#CCFF00] text-black'}`}>{user?.displayName ? user.displayName.charAt(0).toUpperCase() : (user?.email ? user.email.charAt(0).toUpperCase() : 'A')}</div>)}
-            <h3 className={`font-bold uppercase truncate w-full ${theme.text}`}>{user?.displayName || 'OPERATIVE'}</h3>
-            <p className={`font-mono text-[10px] w-full truncate ${theme.textMuted}`}>{user?.email || user?.phoneNumber}</p>
-            <p className="text-[#8A2BE2] font-mono text-xs mt-2 font-bold bg-[#8A2BE2]/10 px-3 py-1 rounded-full border border-[#8A2BE2]/30">{user?.isAnonymous ? 'GUEST TIER' : 'INSIDER TIER'}</p>
+    <div className="pt-24 px-4 max-w-4xl mx-auto min-h-screen pb-20 font-mono">
+      <button onClick={() => setActiveTab('menu')} className={`${theme.textMuted} hover:${theme.text} text-xs mb-8 flex items-center gap-2 uppercase tracking-widest transition-colors`}>
+         <ArrowLeft size={16} /> Back to Account Menu
+      </button>
+
+      <div className={`${theme.card} border ${theme.border} p-6 md:p-10 min-h-[500px]`}>
+        {activeTab === 'orders' && (
+          <div className="animate-in fade-in">
+             <h3 className={`font-black text-2xl uppercase tracking-tighter mb-8 border-b ${theme.border} pb-4 ${theme.text}`} style={{ fontFamily: "'Impact', sans-serif" }}>Transmissions & Orders</h3>
+             {myOrders.length === 0 ? (
+                <div className="text-center py-20"><p className={`text-sm ${theme.textMuted}`}>NO TRANSMISSION HISTORY DETECTED.</p><button onClick={() => handleNavigate('shop')} className={`mt-6 font-bold px-8 py-3 uppercase tracking-widest transition-colors ${theme.btnPrimary}`}>Enter Shop</button></div>
+             ) : (
+                <div className="space-y-6">
+                   {myOrders.map(order => (
+                      <div key={order.id} className={`border ${theme.border} p-4 md:p-6 flex flex-col md:flex-row gap-6 justify-between items-start md:items-center bg-${isLight ? 'white' : 'black'}`}>
+                         <div>
+                            <div className="flex items-center gap-3 mb-2">
+                               <span className={`px-2 py-1 text-[10px] font-bold uppercase ${order.status === 'PENDING' ? 'bg-yellow-500/20 text-yellow-600 border border-yellow-500/30' : order.status === 'DELIVERED' ? 'bg-green-500/20 text-green-600 border border-green-500/30' : 'bg-[#8A2BE2]/20 text-[#8A2BE2] border border-[#8A2BE2]/30'}`}>{order.status}</span>
+                               <span className={`text-xs ${theme.textMuted}`}>{new Date(order.createdAt).toLocaleDateString()}</span>
+                            </div>
+                            <p className={`text-xs mb-1 ${theme.textMuted}`}>ORDER ID: <span className={theme.text}>#{order.id.slice(0,10)}</span></p>
+                            <p className={`font-bold text-lg ${theme.accent}`}>₹{order.total}</p>
+                         </div>
+                         <div className="flex -space-x-4">
+                            {order.items.slice(0,3).map((item, idx) => (<img key={idx} src={item.image} className={`w-12 h-16 object-cover border-2 ${theme.card} rounded-sm grayscale hover:grayscale-0 transition-all`} title={item.name}/>))}
+                            {order.items.length > 3 && <div className={`w-12 h-16 flex items-center justify-center border-2 ${theme.card} bg-gray-800 text-white text-xs font-bold`}>+{order.items.length - 3}</div>}
+                         </div>
+                      </div>
+                   ))}
+                </div>
+             )}
           </div>
-          <div className={`${theme.card} border ${theme.border} p-2 space-y-1 font-mono text-sm`}>
-            <button onClick={()=>setActiveTab('orders')} className={`w-full text-left uppercase px-4 py-3 transition-colors ${activeTab === 'orders' ? (isLight ? 'bg-black text-white' : 'bg-[#CCFF00] text-black') : `${theme.textMuted} hover:${theme.text} hover:bg-black/5`}`}><Package size={14} className="inline mr-2 -mt-1"/> Order History</button>
-            <button onClick={()=>setActiveTab('addresses')} className={`w-full text-left uppercase px-4 py-3 transition-colors ${activeTab === 'addresses' ? (isLight ? 'bg-black text-white' : 'bg-[#CCFF00] text-black') : `${theme.textMuted} hover:${theme.text} hover:bg-black/5`}`}><MapPin size={14} className="inline mr-2 -mt-1"/> Coordinates</button>
-            <button onClick={()=>setActiveTab('settings')} className={`w-full text-left uppercase px-4 py-3 transition-colors ${activeTab === 'settings' ? (isLight ? 'bg-black text-white' : 'bg-[#CCFF00] text-black') : `${theme.textMuted} hover:${theme.text} hover:bg-black/5`}`}><SettingsIcon size={14} className="inline mr-2 -mt-1"/> Settings</button>
-            <button onClick={() => signOut(auth).then(()=>handleNavigate('home'))} className="w-full text-left text-red-500 uppercase px-4 py-3 hover:bg-red-500/10 transition-colors mt-2 border-t border-gray-500/20"><LogOutIcon size={14} className="inline mr-2 -mt-1"/> Logout</button>
+        )}
+        
+        {activeTab === 'addresses' && (
+          <div className="animate-in fade-in max-w-xl mx-auto">
+             <h3 className={`font-black text-2xl uppercase tracking-tighter mb-8 border-b ${theme.border} pb-4 ${theme.text}`} style={{ fontFamily: "'Impact', sans-serif" }}>Default Coordinates</h3>
+             {savedAddr && (
+                <div className={`p-5 mb-8 border-l-4 border-[#8A2BE2] bg-[#8A2BE2]/10 text-sm ${theme.text}`}>
+                   <p className="font-bold text-[#8A2BE2] mb-2 uppercase flex items-center gap-2"><CheckCircle size={16}/> Active Coordinates</p>
+                   <p>{savedAddr.address}</p>
+                   <p>{savedAddr.city}, {savedAddr.state} - {savedAddr.pin}</p>
+                </div>
+             )}
+             <form onSubmit={handleSaveAddress} className="space-y-4 text-sm">
+                <div><label className={`block mb-1 font-bold ${theme.accent}`}>STREET ADDRESS</label><input required value={addrForm.address} onChange={e=>setAddrForm({...addrForm, address: e.target.value})} className={`w-full p-4 outline-none ${theme.input}`} /></div>
+                <div className="grid grid-cols-2 gap-4"><div><label className={`block mb-1 font-bold ${theme.accent}`}>CITY</label><input required value={addrForm.city} onChange={e=>setAddrForm({...addrForm, city: e.target.value})} className={`w-full p-4 outline-none ${theme.input}`} /></div><div><label className={`block mb-1 font-bold ${theme.accent}`}>STATE</label><input required value={addrForm.state} onChange={e=>setAddrForm({...addrForm, state: e.target.value})} className={`w-full p-4 outline-none ${theme.input}`} /></div></div>
+                <div><label className={`block mb-1 font-bold ${theme.accent}`}>PINCODE</label><input required value={addrForm.pin} onChange={e=>setAddrForm({...addrForm, pin: e.target.value.replace(/\D/g, '').slice(0,6)})} className={`w-full p-4 outline-none ${theme.input}`} /></div>
+                <button type="submit" className={`w-full font-bold py-4 uppercase tracking-widest mt-4 ${theme.btnPrimary}`}>Update Coordinates</button>
+             </form>
           </div>
-        </div>
-        <div className={`col-span-1 md:col-span-3 ${theme.card} border ${theme.border} min-h-[500px] p-6 md:p-8`}>
-          {activeTab === 'orders' && (
-            <div className="animate-in fade-in">
-               <h3 className={`font-black text-2xl uppercase tracking-tighter mb-6 border-b ${theme.border} pb-4 ${theme.text}`} style={{ fontFamily: "'Impact', sans-serif" }}>Transmissions & Orders</h3>
-               {myOrders.length === 0 ? (
-                  <div className="text-center py-20"><p className={`font-mono text-sm ${theme.textMuted}`}>NO TRANSMISSION HISTORY DETECTED.</p><button onClick={() => handleNavigate('shop')} className={`mt-6 font-bold px-8 py-3 uppercase tracking-widest transition-colors ${theme.btnPrimary}`}>Enter Shop</button></div>
-               ) : (
-                  <div className="space-y-6">
-                     {myOrders.map(order => (
-                        <div key={order.id} className={`border ${theme.border} p-4 md:p-6 flex flex-col md:flex-row gap-6 justify-between items-start md:items-center`}>
-                           <div>
-                              <div className="flex items-center gap-3 mb-2"><span className={`px-2 py-1 text-[10px] font-bold uppercase ${order.status === 'PENDING' ? 'bg-yellow-500/20 text-yellow-600 border border-yellow-500/30' : order.status === 'DELIVERED' ? 'bg-green-500/20 text-green-600 border border-green-500/30' : 'bg-[#8A2BE2]/20 text-[#8A2BE2] border border-[#8A2BE2]/30'}`}>{order.status}</span><span className={`font-mono text-xs ${theme.textMuted}`}>{new Date(order.createdAt).toLocaleDateString()}</span></div>
-                              <p className={`font-mono text-xs mb-1 ${theme.textMuted}`}>ORDER ID: <span className={theme.text}>#{order.id.slice(0,10)}</span></p>
-                              <p className={`font-mono font-bold text-lg ${theme.accent}`}>₹{order.total}</p>
-                           </div>
-                           <div className="flex -space-x-4">
-                              {order.items.slice(0,3).map((item, idx) => (<img key={idx} src={item.image} className={`w-12 h-16 object-cover border-2 ${theme.card} rounded-sm grayscale hover:grayscale-0 transition-all`} title={item.name}/>))}
-                              {order.items.length > 3 && <div className={`w-12 h-16 flex items-center justify-center border-2 ${theme.card} bg-gray-800 text-white text-xs font-bold font-mono`}>+{order.items.length - 3}</div>}
-                           </div>
-                        </div>
-                     ))}
-                  </div>
-               )}
-            </div>
-          )}
-          {activeTab === 'addresses' && (
-            <div className="animate-in fade-in max-w-xl">
-               <h3 className={`font-black text-2xl uppercase tracking-tighter mb-6 border-b ${theme.border} pb-4 ${theme.text}`} style={{ fontFamily: "'Impact', sans-serif" }}>Default Coordinates</h3>
-               {savedAddr && (
-                  <div className={`p-4 mb-8 border-l-4 border-[#8A2BE2] bg-[#8A2BE2]/10 font-mono text-sm ${theme.text}`}><p className="font-bold text-[#8A2BE2] mb-2 uppercase">Current Active Coordinates:</p><p>{savedAddr.address}</p><p>{savedAddr.city}, {savedAddr.state} - {savedAddr.pin}</p></div>
-               )}
-               <form onSubmit={handleSaveAddress} className="space-y-4 font-mono text-sm">
-                  <div><label className={`block mb-1 font-bold ${theme.accent}`}>STREET ADDRESS</label><input required value={addrForm.address} onChange={e=>setAddrForm({...addrForm, address: e.target.value})} className={`w-full p-3 outline-none ${theme.input}`} /></div>
-                  <div className="grid grid-cols-2 gap-4"><div><label className={`block mb-1 font-bold ${theme.accent}`}>CITY</label><input required value={addrForm.city} onChange={e=>setAddrForm({...addrForm, city: e.target.value})} className={`w-full p-3 outline-none ${theme.input}`} /></div><div><label className={`block mb-1 font-bold ${theme.accent}`}>STATE</label><input required value={addrForm.state} onChange={e=>setAddrForm({...addrForm, state: e.target.value})} className={`w-full p-3 outline-none ${theme.input}`} /></div></div>
-                  <div><label className={`block mb-1 font-bold ${theme.accent}`}>PINCODE</label><input required value={addrForm.pin} onChange={e=>setAddrForm({...addrForm, pin: e.target.value.replace(/\D/g, '').slice(0,6)})} className={`w-full p-3 outline-none ${theme.input}`} /></div>
-                  <button type="submit" className={`w-full font-bold py-4 uppercase tracking-widest mt-4 ${theme.btnPrimary}`}>Update Coordinates</button>
-               </form>
-            </div>
-          )}
-          {activeTab === 'settings' && (
-            <div className="animate-in fade-in max-w-xl">
-               <h3 className={`font-black text-2xl uppercase tracking-tighter mb-6 border-b ${theme.border} pb-4 ${theme.text}`} style={{ fontFamily: "'Impact', sans-serif" }}>System Settings</h3>
-               <form onSubmit={handleUpdateProfile} className="space-y-6 font-mono text-sm">
-                  <div><label className={`block mb-2 font-bold ${theme.accent}`}>OPERATIVE NAME</label><input required value={updateName} onChange={e=>setUpdateName(e.target.value)} className={`w-full p-3 outline-none ${theme.input}`} /></div>
-                  <div>
-                     <label className={`block mb-2 font-bold ${theme.accent}`}>AVATAR PROJECTION URL</label>
-                     <div className="flex gap-4 mb-4">
-                        {updateAvatar ? <img src={updateAvatar} className={`w-16 h-16 rounded-full object-cover border ${theme.border}`} /> : <div className={`w-16 h-16 rounded-full flex items-center justify-center ${theme.border} border border-dashed text-gray-500`}>N/A</div>}
-                        <div className="flex-1"><input value={updateAvatar} onChange={e=>setUpdateAvatar(e.target.value)} placeholder="Paste new image URL..." className={`w-full p-3 outline-none ${theme.input}`} /></div>
-                     </div>
-                  </div>
-                  <button type="submit" className={`w-full font-bold py-4 uppercase tracking-widest ${theme.btnPrimary}`}>Save Profile Changes</button>
-               </form>
-            </div>
-          )}
-        </div>
+        )}
+        
+        {activeTab === 'settings' && (
+          <div className="animate-in fade-in max-w-xl mx-auto">
+             <h3 className={`font-black text-2xl uppercase tracking-tighter mb-8 border-b ${theme.border} pb-4 ${theme.text}`} style={{ fontFamily: "'Impact', sans-serif" }}>Profile Details</h3>
+             <form onSubmit={handleUpdateProfile} className="space-y-6 text-sm">
+                <div><label className={`block mb-2 font-bold ${theme.accent}`}>OPERATIVE NAME</label><input required value={updateName} onChange={e=>setUpdateName(e.target.value)} className={`w-full p-4 outline-none ${theme.input}`} /></div>
+                <div>
+                   <label className={`block mb-2 font-bold ${theme.accent}`}>AVATAR PROJECTION URL</label>
+                   <div className="flex gap-4 mb-4">
+                      {updateAvatar ? <img src={updateAvatar} className={`w-16 h-16 rounded-full object-cover border ${theme.border}`} /> : <div className={`w-16 h-16 rounded-full flex items-center justify-center ${theme.border} border border-dashed text-gray-500`}>N/A</div>}
+                      <div className="flex-1"><input value={updateAvatar} onChange={e=>setUpdateAvatar(e.target.value)} placeholder="Paste new image URL..." className={`w-full p-4 outline-none ${theme.input}`} /></div>
+                   </div>
+                </div>
+                <button type="submit" className={`w-full font-bold py-4 uppercase tracking-widest ${theme.btnPrimary}`}>Save Profile Changes</button>
+             </form>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -685,7 +735,7 @@ const Shop = ({ appState }) => {
 };
 
 const AdminPanel = ({ appState }) => {
-  const { handleNavigate, user, products } = appState;
+  const { handleNavigate, user, products, setProducts } = appState;
   const [adminView, setAdminView] = useState('dashboard');
   const [orders, setOrders] = useState([]);
   const [tickets, setTickets] = useState([]);
@@ -698,11 +748,11 @@ const AdminPanel = ({ appState }) => {
         unsubOrders = onSnapshot(query(collection(db, 'artifacts', appId, 'public', 'data', 'orders')), (snap) => {
           const loaded = snap.docs.map(doc => ({ id: doc.id, ...doc.data() })).sort((a,b) => new Date(b.createdAt) - new Date(a.createdAt)); 
           setOrders(loaded);
-        }, (err) => console.error("Admin orders error:", err)); // FATAL CRASH FIX
+        }, (err) => console.error("Admin orders error:", err));
         unsubTickets = onSnapshot(query(collection(db, 'artifacts', appId, 'public', 'data', 'tickets')), (snap) => {
           const loadedT = snap.docs.map(doc => ({ id: doc.id, ...doc.data() })).sort((a,b) => new Date(b.createdAt) - new Date(a.createdAt)); 
           setTickets(loadedT);
-        }, (err) => console.error("Admin tickets error:", err)); // FATAL CRASH FIX
+        }, (err) => console.error("Admin tickets error:", err)); 
       } catch (authErr) { console.error("Admin Auth Error", authErr); }
     }
     authenticateAndFetch();
@@ -710,6 +760,41 @@ const AdminPanel = ({ appState }) => {
   }, [user]);
 
   const handleReplyTicket = async (ticketId) => { const reply = prompt("Enter your reply to the user. This will mark the ticket as resolved."); if(reply) { try { await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'tickets', ticketId), { status: 'RESOLVED', reply: reply }); } catch(e){} } };
+
+  // --- RESTORED ADMIN FUNCTIONALITIES ---
+  const handleUpdateOrderStatus = async (orderId, newStatus) => {
+     try {
+       await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'orders', orderId), { status: newStatus });
+     } catch (e) {
+       console.error("Failed to update status on DB, updating locally.", e);
+       setOrders(prev => prev.map(o => o.id === orderId ? { ...o, status: newStatus } : o));
+     }
+  };
+
+  const handleAddProduct = () => {
+    const name = prompt("Enter new product name:");
+    if (!name) return;
+    const price = prompt("Enter price (INR):", "2999");
+    const category = prompt("Enter category (Tops/Bottoms/Outerwear/Hardware):", "Tops");
+    const image = prompt("Paste Image URL:", "https://images.unsplash.com/photo-1556821840-3a63f95609a7?auto=format&fit=crop&q=80&w=800");
+    
+    const newProduct = {
+       id: Date.now(),
+       name: name.toUpperCase(),
+       price: parseInt(price) || 2999,
+       category: category || "Tops",
+       stock: 10,
+       image: image || "https://images.unsplash.com/photo-1556821840-3a63f95609a7?auto=format&fit=crop&q=80&w=800",
+       badge: "NEW DROP"
+    };
+    setProducts([newProduct, ...products]);
+  };
+
+  const handleDeleteProduct = (prodId) => {
+    if (window.confirm("Are you sure you want to delete this product?")) {
+      setProducts(products.filter(p => p.id !== prodId));
+    }
+  };
 
   const DronaTabs = [{ id: 'dashboard', icon: LayoutDashboard, label: 'Analytics Dashboard' }, { id: 'orders', icon: Package, label: 'Fulfillment Tracking' }, { id: 'products', icon: Box, label: 'Product & Catalog' }, { id: 'tickets', icon: MessageSquare, label: 'Support Inbox' }, { id: 'crm', icon: Users, label: 'Customer Relations' }, { id: 'marketing', icon: Tag, label: 'Marketing & Promos' }];
   const totalRevenue = orders.reduce((sum, o) => sum + (o.total || 0), 0);
@@ -723,14 +808,79 @@ const AdminPanel = ({ appState }) => {
       </div>
       <div className="flex-1 p-4 md:p-8 h-screen overflow-y-auto bg-[url('https://www.transparenttextures.com/patterns/cubes.png')] bg-repeat">
         <div className="max-w-6xl mx-auto">
+          
           {adminView === 'dashboard' && (
             <div className="animate-in fade-in"><div className="flex justify-between items-end mb-8 border-b border-[#333] pb-4"><div><h2 className="text-2xl font-black uppercase text-white">Analytics Dashboard</h2><p className="text-xs text-gray-500 mt-1">Real-time visualization of key metrics</p></div><button onClick={() => window.print()} className="bg-[#CCFF00] text-black text-xs font-bold px-4 py-2 uppercase hover:bg-white transition-colors">Export PDF Report</button></div><div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8"><div className="bg-[#0A0A0A] border border-[#333] p-5"><p className="text-[10px] text-gray-500 mb-2 uppercase">Gross Revenue</p><p className="text-3xl text-[#CCFF00]">₹{totalRevenue}</p></div><div className="bg-[#0A0A0A] border border-[#333] p-5"><p className="text-[10px] text-gray-500 mb-2 uppercase">Order Volume</p><p className="text-3xl text-white">{orders.length}</p></div><div className="bg-[#0A0A0A] border border-[#333] p-5"><p className="text-[10px] text-gray-500 mb-2 uppercase">Open Tickets</p><p className="text-3xl text-red-500">{tickets.filter(t=>t.status==='OPEN').length}</p></div><div className="bg-[#0A0A0A] border border-[#333] p-5"><p className="text-[10px] text-gray-500 mb-2 uppercase">Cart Abandonment</p><p className="text-3xl text-white">64%</p></div></div></div>
           )}
+          
           {adminView === 'tickets' && (
             <div className="animate-in fade-in"><div className="flex justify-between items-end mb-8 border-b border-[#333] pb-4"><div><h2 className="text-2xl font-black uppercase text-white">Support Inbox</h2><p className="text-xs text-gray-500 mt-1">Resolve incoming transmissions</p></div></div><div className="space-y-4">{tickets.map(t => (<div key={t.id} className="bg-[#0A0A0A] border border-[#333] p-6"><div className="flex justify-between items-start mb-4"><div><span className="text-white font-bold">{t.userEmail}</span><span className="text-gray-500 text-[10px] ml-4">{new Date(t.createdAt).toLocaleString()}</span></div><span className={`text-[10px] font-bold px-2 py-1 uppercase ${t.status==='OPEN' ? 'bg-red-500/20 text-red-500' : 'bg-green-500/20 text-green-500'}`}>{t.status}</span></div><p className="text-sm text-gray-300 mb-4 pb-4 border-b border-[#333]">"{t.message}"</p>{t.status === 'OPEN' ? (<button onClick={()=>handleReplyTicket(t.id)} className="text-[#8A2BE2] text-xs font-bold uppercase hover:underline flex items-center gap-2"><MessageSquare size={14}/> Reply & Resolve</button>) : (<div className="text-xs text-gray-500"><span className="text-[#CCFF00] font-bold">ADMIN REPLY:</span> {t.reply}</div>)}</div>))}{tickets.length === 0 && <p className="text-center text-gray-500 py-8">NO INCOMING TRANSMISSIONS.</p>}</div></div>
           )}
-          {adminView === 'orders' && (<div className="animate-in fade-in"><h2 className="text-2xl font-black uppercase text-white mb-8 border-b border-[#333] pb-4">Fulfillment Tracking</h2><div className="bg-[#0A0A0A] border border-[#333] overflow-x-auto"><table className="w-full text-left text-xs whitespace-nowrap"><thead className="bg-[#111] text-gray-400 uppercase"><tr><th className="p-4 border-b border-[#333]">ID</th><th className="p-4 border-b border-[#333]">Customer</th><th className="p-4 border-b border-[#333]">Value</th><th className="p-4 border-b border-[#333]">Status</th></tr></thead><tbody className="text-gray-300">{orders.map(o=><tr key={o.id} className="border-b border-[#333]"><td className="p-4">#{o.id.slice(0,8)}</td><td className="p-4">{o.userEmail}</td><td className="p-4 text-[#CCFF00]">₹{o.total}</td><td className="p-4">{o.status}</td></tr>)}</tbody></table></div></div>)}
-          {adminView === 'products' && (<div className="animate-in fade-in"><h2 className="text-2xl font-black uppercase text-white mb-8 border-b border-[#333] pb-4">Product Catalog</h2><div className="grid grid-cols-2 md:grid-cols-4 gap-4">{products.map(p=><div key={p.id} className="bg-[#0A0A0A] border border-[#333] p-4"><img src={p.image} className="w-full h-32 object-cover mb-2"/><p className="text-xs text-white font-bold truncate">{p.name}</p><p className="text-[#CCFF00] text-xs">₹{p.price}</p></div>)}</div></div>)}
+          
+          {/* UPGRADED ORDERS TAB */}
+          {adminView === 'orders' && (
+            <div className="animate-in fade-in">
+              <h2 className="text-2xl font-black uppercase text-white mb-8 border-b border-[#333] pb-4">Fulfillment Tracking</h2>
+              <div className="bg-[#0A0A0A] border border-[#333] overflow-x-auto">
+                <table className="w-full text-left text-xs whitespace-nowrap">
+                  <thead className="bg-[#111] text-gray-400 uppercase">
+                    <tr><th className="p-4 border-b border-[#333]">ID</th><th className="p-4 border-b border-[#333]">Customer</th><th className="p-4 border-b border-[#333]">Value</th><th className="p-4 border-b border-[#333]">Date</th><th className="p-4 border-b border-[#333]">Status Action</th></tr>
+                  </thead>
+                  <tbody className="text-gray-300">
+                    {orders.map(o=>(
+                      <tr key={o.id} className="border-b border-[#333] hover:bg-[#111]">
+                        <td className="p-4">#{o.id.slice(0,8)}</td>
+                        <td className="p-4">{o.userEmail}</td>
+                        <td className="p-4 text-[#CCFF00]">₹{o.total}</td>
+                        <td className="p-4 text-gray-500">{new Date(o.createdAt).toLocaleDateString()}</td>
+                        <td className="p-4">
+                           <select 
+                             value={o.status} 
+                             onChange={(e) => handleUpdateOrderStatus(o.id, e.target.value)} 
+                             className={`bg-black border p-2 text-[10px] font-bold outline-none cursor-pointer ${o.status === 'PENDING' ? 'text-yellow-500 border-yellow-500/30' : o.status === 'DELIVERED' ? 'text-green-500 border-green-500/30' : 'text-[#8A2BE2] border-[#8A2BE2]/30'}`}
+                           >
+                              <option value="PENDING">MARK PENDING</option>
+                              <option value="SHIPPED">MARK SHIPPED</option>
+                              <option value="DELIVERED">MARK DELIVERED</option>
+                           </select>
+                        </td>
+                      </tr>
+                    ))}
+                    {orders.length === 0 && <tr><td colSpan="5" className="p-8 text-center text-gray-500">NO ORDERS DETECTED.</td></tr>}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+          
+          {/* UPGRADED PRODUCTS TAB */}
+          {adminView === 'products' && (
+            <div className="animate-in fade-in">
+              <div className="flex justify-between items-end mb-8 border-b border-[#333] pb-4">
+                <h2 className="text-2xl font-black uppercase text-white">Product Catalog</h2>
+                <button onClick={handleAddProduct} className="bg-[#8A2BE2] text-white px-4 py-2 text-xs font-bold uppercase flex items-center gap-2 hover:bg-purple-600 transition-colors">
+                  <Plus size={14}/> Inject Product
+                </button>
+              </div>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                {products.map(p=>(
+                  <div key={p.id} className="bg-[#0A0A0A] border border-[#333] flex flex-col group relative">
+                    <img src={p.image} className="w-full h-40 object-cover mb-2 grayscale opacity-60 group-hover:opacity-100 group-hover:grayscale-0 transition-all"/>
+                    <div className="p-4 flex flex-col flex-1">
+                      <p className="text-xs text-white font-bold truncate uppercase">{p.name}</p>
+                      <p className="text-[10px] text-gray-500 mb-2">{p.category}</p>
+                      <p className="text-[#CCFF00] text-xs font-bold mt-auto">₹{p.price}</p>
+                    </div>
+                    {/* Restored Delete Button */}
+                    <button onClick={() => handleDeleteProduct(p.id)} className="absolute top-2 right-2 bg-red-500 text-white p-2 opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-600 rounded-sm">
+                      <Trash2 size={12}/>
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
         </div>
       </div>
     </div>
