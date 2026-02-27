@@ -707,7 +707,7 @@ const ProductDetail = ({ appState }) => {
 };
 
 const Shop = ({ appState }) => {
-  const { theme, isLight, shopCategory, setShopCategory, products, setShowVibeMatcher, openProduct } = appState;
+  const { theme, isLight, shopCategory, setShopCategory, products, setShowVibeMatcher, openProduct, categories } = appState;
   const [sortBy, setSortBy] = useState('recommended');
   let filteredProducts = shopCategory === 'All Categories' ? products : products.filter(p => p.category === shopCategory);
   if (sortBy === 'price-low') filteredProducts = [...filteredProducts].sort((a, b) => a.price - b.price);
@@ -720,7 +720,7 @@ const Shop = ({ appState }) => {
           <div><h2 className={`text-3xl md:text-5xl font-black uppercase tracking-tighter ${theme.text}`} style={{ fontFamily: "'Impact', sans-serif" }}>{shopCategory === 'All Categories' ? 'The Collection' : shopCategory}</h2><p className={`font-mono text-xs mt-1 md:mt-2 uppercase tracking-widest ${theme.textMuted}`}>[{filteredProducts.length} Items Detected]</p></div>
           <div className="flex flex-wrap items-center gap-2 md:gap-4"><button onClick={() => setShowVibeMatcher(true)} className="flex-1 md:flex-none justify-center flex items-center gap-2 bg-[#8A2BE2]/10 text-[#8A2BE2] border border-[#8A2BE2]/30 px-4 py-2.5 font-mono text-xs uppercase hover:bg-[#8A2BE2] hover:text-white transition-all"><Sparkles size={14} /> AI Vibe Check</button><div className={`flex items-center border ${theme.border} px-3 py-2.5 flex-1 md:flex-none bg-transparent`}><span className={`text-[10px] uppercase font-bold mr-2 ${theme.textMuted}`}>Sort:</span><select value={sortBy} onChange={e => setSortBy(e.target.value)} className={`bg-transparent font-mono text-xs uppercase outline-none cursor-pointer ${theme.text} w-full`}><option value="recommended" className="bg-black text-white">Recommended</option><option value="price-high" className="bg-black text-white">Price: High to Low</option><option value="price-low" className="bg-black text-white">Price: Low to High</option></select></div></div>
         </div>
-        <div className="flex gap-2 overflow-x-auto pb-2 scrollbar-hide">{['All Categories', 'Outerwear', 'Tops', 'Bottoms', 'Hardware'].map(cat => (<button key={cat} onClick={() => setShopCategory(cat)} className={`whitespace-nowrap px-6 py-2.5 font-mono text-xs font-bold uppercase border transition-colors ${shopCategory === cat ? (isLight ? 'bg-black text-white border-black' : 'bg-[#CCFF00] text-black border-[#CCFF00]') : `border-${isLight?'black/10':'white/10'} ${theme.textMuted} hover:${theme.text} hover:border-${isLight?'black':'white'}`}`}>{cat}</button>))}</div>
+        <div className="flex gap-2 overflow-x-auto pb-2 scrollbar-hide">{['All Categories', ...categories].map(cat => (<button key={cat} onClick={() => setShopCategory(cat)} className={`whitespace-nowrap px-6 py-2.5 font-mono text-xs font-bold uppercase border transition-colors ${shopCategory === cat ? (isLight ? 'bg-black text-white border-black' : 'bg-[#CCFF00] text-black border-[#CCFF00]') : `border-${isLight?'black/10':'white/10'} ${theme.textMuted} hover:${theme.text} hover:border-${isLight?'black':'white'}`}`}>{cat}</button>))}</div>
       </div>
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 md:gap-6">
       {filteredProducts.map(product => (
@@ -735,10 +735,16 @@ const Shop = ({ appState }) => {
 };
 
 const AdminPanel = ({ appState }) => {
-  const { handleNavigate, user, products, setProducts } = appState;
+  const { handleNavigate, user, products, setProducts, categories, setCategories } = appState;
   const [adminView, setAdminView] = useState('dashboard');
   const [orders, setOrders] = useState([]);
   const [tickets, setTickets] = useState([]);
+  
+  // Marketing States
+  const [promos, setPromos] = useState([{ code: 'NEON20', discount: '20% OFF', usage: '142 / 500', status: 'Active' }]);
+  
+  // CRM States
+  const [crmSearch, setCrmSearch] = useState('');
   
   useEffect(() => {
     let unsubOrders, unsubTickets;
@@ -775,14 +781,14 @@ const AdminPanel = ({ appState }) => {
     const name = prompt("Enter new product name:");
     if (!name) return;
     const price = prompt("Enter price (INR):", "2999");
-    const category = prompt("Enter category (Tops/Bottoms/Outerwear/Hardware):", "Tops");
+    const category = prompt(`Enter category (${categories.join('/')}):`, categories[0] || "Tops");
     const image = prompt("Paste Image URL:", "https://images.unsplash.com/photo-1556821840-3a63f95609a7?auto=format&fit=crop&q=80&w=800");
     
     const newProduct = {
        id: Date.now(),
        name: name.toUpperCase(),
        price: parseInt(price) || 2999,
-       category: category || "Tops",
+       category: category || categories[0],
        stock: 10,
        image: image || "https://images.unsplash.com/photo-1556821840-3a63f95609a7?auto=format&fit=crop&q=80&w=800",
        badge: "NEW DROP"
@@ -796,7 +802,47 @@ const AdminPanel = ({ appState }) => {
     }
   };
 
-  const DronaTabs = [{ id: 'dashboard', icon: LayoutDashboard, label: 'Analytics Dashboard' }, { id: 'orders', icon: Package, label: 'Fulfillment Tracking' }, { id: 'products', icon: Box, label: 'Product & Catalog' }, { id: 'tickets', icon: MessageSquare, label: 'Support Inbox' }, { id: 'crm', icon: Users, label: 'Customer Relations' }, { id: 'marketing', icon: Tag, label: 'Marketing & Promos' }];
+  const handleAddCategory = () => {
+     const newCat = prompt("Enter new category name:");
+     if (newCat && !categories.includes(newCat)) {
+        setCategories([...categories, newCat]);
+     }
+  };
+
+  // Marketing Actions
+  const handleAddPromo = () => {
+    const code = prompt("Enter New Promo Code (e.g. CYBER50):");
+    if (!code) return;
+    const discount = prompt("Enter Discount details (e.g. 50% OFF):", "10% OFF");
+    setPromos([{ code: code.toUpperCase(), discount, usage: '0 / 100', status: 'Active' }, ...promos]);
+  };
+
+  const handleRevokePromo = (codeToRevoke) => {
+    if (window.confirm(`Revoke promo code ${codeToRevoke}?`)) {
+      setPromos(promos.map(p => p.code === codeToRevoke ? { ...p, status: 'Revoked' } : p));
+    }
+  };
+
+  // Derive CRM Users from Orders
+  const crmUsersMap = {};
+  orders.forEach(o => {
+    if (!crmUsersMap[o.userEmail]) {
+      crmUsersMap[o.userEmail] = { email: o.userEmail, totalSpent: 0, orderCount: 0 };
+    }
+    crmUsersMap[o.userEmail].totalSpent += o.total;
+    crmUsersMap[o.userEmail].orderCount += 1;
+  });
+  const crmUsers = Object.values(crmUsersMap).filter(u => u.email.toLowerCase().includes(crmSearch.toLowerCase()));
+
+  const DronaTabs = [
+    { id: 'dashboard', icon: LayoutDashboard, label: 'Analytics Dashboard' }, 
+    { id: 'orders', icon: Package, label: 'Fulfillment Tracking' }, 
+    { id: 'products', icon: Box, label: 'Product & Catalog' }, 
+    { id: 'crm', icon: Users, label: 'Customer Relations' }, 
+    { id: 'marketing', icon: Tag, label: 'Marketing & Promos' },
+    { id: 'tickets', icon: MessageSquare, label: 'Support Inbox' }
+  ];
+  
   const totalRevenue = orders.reduce((sum, o) => sum + (o.total || 0), 0);
 
   return (
@@ -817,7 +863,6 @@ const AdminPanel = ({ appState }) => {
             <div className="animate-in fade-in"><div className="flex justify-between items-end mb-8 border-b border-[#333] pb-4"><div><h2 className="text-2xl font-black uppercase text-white">Support Inbox</h2><p className="text-xs text-gray-500 mt-1">Resolve incoming transmissions</p></div></div><div className="space-y-4">{tickets.map(t => (<div key={t.id} className="bg-[#0A0A0A] border border-[#333] p-6"><div className="flex justify-between items-start mb-4"><div><span className="text-white font-bold">{t.userEmail}</span><span className="text-gray-500 text-[10px] ml-4">{new Date(t.createdAt).toLocaleString()}</span></div><span className={`text-[10px] font-bold px-2 py-1 uppercase ${t.status==='OPEN' ? 'bg-red-500/20 text-red-500' : 'bg-green-500/20 text-green-500'}`}>{t.status}</span></div><p className="text-sm text-gray-300 mb-4 pb-4 border-b border-[#333]">"{t.message}"</p>{t.status === 'OPEN' ? (<button onClick={()=>handleReplyTicket(t.id)} className="text-[#8A2BE2] text-xs font-bold uppercase hover:underline flex items-center gap-2"><MessageSquare size={14}/> Reply & Resolve</button>) : (<div className="text-xs text-gray-500"><span className="text-[#CCFF00] font-bold">ADMIN REPLY:</span> {t.reply}</div>)}</div>))}{tickets.length === 0 && <p className="text-center text-gray-500 py-8">NO INCOMING TRANSMISSIONS.</p>}</div></div>
           )}
           
-          {/* UPGRADED ORDERS TAB */}
           {adminView === 'orders' && (
             <div className="animate-in fade-in">
               <h2 className="text-2xl font-black uppercase text-white mb-8 border-b border-[#333] pb-4">Fulfillment Tracking</h2>
@@ -853,14 +898,18 @@ const AdminPanel = ({ appState }) => {
             </div>
           )}
           
-          {/* UPGRADED PRODUCTS TAB */}
           {adminView === 'products' && (
             <div className="animate-in fade-in">
               <div className="flex justify-between items-end mb-8 border-b border-[#333] pb-4">
                 <h2 className="text-2xl font-black uppercase text-white">Product Catalog</h2>
-                <button onClick={handleAddProduct} className="bg-[#8A2BE2] text-white px-4 py-2 text-xs font-bold uppercase flex items-center gap-2 hover:bg-purple-600 transition-colors">
-                  <Plus size={14}/> Inject Product
-                </button>
+                <div className="flex gap-4">
+                  <button onClick={handleAddCategory} className="bg-[#111] border border-[#333] text-white px-4 py-2 text-xs font-bold uppercase hover:bg-white hover:text-black transition-colors">
+                    + Add Category
+                  </button>
+                  <button onClick={handleAddProduct} className="bg-[#8A2BE2] text-white px-4 py-2 text-xs font-bold uppercase flex items-center gap-2 hover:bg-purple-600 transition-colors">
+                    <Plus size={14}/> Inject Product
+                  </button>
+                </div>
               </div>
               <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                 {products.map(p=>(
@@ -871,12 +920,83 @@ const AdminPanel = ({ appState }) => {
                       <p className="text-[10px] text-gray-500 mb-2">{p.category}</p>
                       <p className="text-[#CCFF00] text-xs font-bold mt-auto">₹{p.price}</p>
                     </div>
-                    {/* Restored Delete Button */}
                     <button onClick={() => handleDeleteProduct(p.id)} className="absolute top-2 right-2 bg-red-500 text-white p-2 opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-600 rounded-sm">
                       <Trash2 size={12}/>
                     </button>
                   </div>
                 ))}
+              </div>
+            </div>
+          )}
+
+          {/* NEW: CRM TAB RESTORED */}
+          {adminView === 'crm' && (
+            <div className="animate-in fade-in">
+              <div className="flex justify-between items-end mb-8 border-b border-[#333] pb-4">
+                <div>
+                  <h2 className="text-2xl font-black uppercase text-white">Customer Relations</h2>
+                  <p className="text-xs text-gray-500 mt-1">Derived from transmission history</p>
+                </div>
+                <div className="bg-black border border-[#333] flex items-center px-3">
+                  <Search size={14} className="text-gray-500"/>
+                  <input type="text" placeholder="Search email..." value={crmSearch} onChange={(e) => setCrmSearch(e.target.value)} className="bg-transparent p-2 text-xs text-white outline-none w-48"/>
+                </div>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                {crmUsers.map((u, i) => (
+                  <div key={i} className="bg-[#0A0A0A] border border-[#333] p-5">
+                    <div className="flex items-center gap-3 border-b border-[#333] pb-3 mb-3">
+                      <div className="w-10 h-10 bg-[#111] border border-[#333] flex items-center justify-center font-bold text-white uppercase">{u.email.charAt(0)}</div>
+                      <div className="overflow-hidden">
+                        <p className="text-sm font-bold text-white truncate w-full">{u.email}</p>
+                        <p className="text-[10px] text-gray-500 mt-1">LIFETIME VALUE</p>
+                      </div>
+                    </div>
+                    <div className="flex justify-between text-xs mb-1"><span className="text-gray-500">Total Spent:</span><span className="text-[#CCFF00] font-bold">₹{u.totalSpent}</span></div>
+                    <div className="flex justify-between text-xs mb-4"><span className="text-gray-500">Total Orders:</span><span className="text-white font-bold">{u.orderCount}</span></div>
+                  </div>
+                ))}
+                {crmUsers.length === 0 && <p className="text-gray-500 col-span-3 text-center py-8">NO CUSTOMER DATA MATCHED IN SECURE RECORDS.</p>}
+              </div>
+            </div>
+          )}
+
+          {/* NEW: MARKETING & PROMOS RESTORED */}
+          {adminView === 'marketing' && (
+            <div className="animate-in fade-in">
+              <div className="flex justify-between items-end mb-8 border-b border-[#333] pb-4">
+                <div>
+                  <h2 className="text-2xl font-black uppercase text-white">Marketing & Promos</h2>
+                  <p className="text-xs text-gray-500 mt-1">Manage active voucher codes</p>
+                </div>
+                <button onClick={handleAddPromo} className="bg-[#8A2BE2] text-white text-xs font-bold px-4 py-2 uppercase flex items-center gap-2 hover:bg-purple-600 transition-colors">
+                  <Plus size={14}/> Generate Promo
+                </button>
+              </div>
+              <div className="bg-[#0A0A0A] border border-[#333] overflow-x-auto">
+                <table className="w-full text-left text-xs whitespace-nowrap">
+                  <thead className="bg-[#111] text-gray-400 uppercase">
+                    <tr><th className="p-4 border-b border-[#333]">Voucher Code</th><th className="p-4 border-b border-[#333]">Discount</th><th className="p-4 border-b border-[#333]">Usage Limit</th><th className="p-4 border-b border-[#333]">Status</th><th className="p-4 border-b border-[#333]">Action</th></tr>
+                  </thead>
+                  <tbody className="text-gray-300">
+                    {promos.map((promo, i) => (
+                      <tr key={i} className="border-b border-[#333] hover:bg-[#111] transition-colors">
+                        <td className={`p-4 font-black text-lg ${promo.status === 'Active' ? 'text-white' : 'text-gray-500 line-through'}`}>{promo.code}</td>
+                        <td className={`p-4 font-bold ${promo.status === 'Active' ? 'text-[#CCFF00]' : 'text-gray-500'}`}>{promo.discount}</td>
+                        <td className="p-4 text-gray-500">{promo.usage}</td>
+                        <td className="p-4">
+                          {promo.status === 'Active' ? <span className="text-[9px] bg-green-500/10 text-green-500 border border-green-500/30 px-2 py-1 uppercase font-bold">Active</span> :
+                           <span className="text-[9px] bg-red-500/10 text-red-500 border border-red-500/30 px-2 py-1 uppercase font-bold">Revoked</span>}
+                        </td>
+                        <td className="p-4">
+                           {promo.status === 'Active' ? (
+                             <button onClick={() => handleRevokePromo(promo.code)} className="text-red-500 uppercase text-[10px] font-bold hover:underline">Revoke Code</button>
+                           ) : <span className="text-gray-600">--</span>}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
             </div>
           )}
@@ -993,6 +1113,7 @@ export default function App() {
   const [cart, setCart] = useState([]);
   const [wishlist, setWishlist] = useState([]);
   const [products, setProducts] = useState(INITIAL_PRODUCTS);
+  const [categories, setCategories] = useState(['Outerwear', 'Tops', 'Bottoms', 'Hardware']); // DYNAMIC CATEGORIES
   const [isCartOpen, setIsCartOpen] = useState(false);
   const [showSizeAI, setShowSizeAI] = useState(false);
   const [showVibeMatcher, setShowVibeMatcher] = useState(false);
@@ -1102,6 +1223,7 @@ export default function App() {
 
   const appState = {
     view, setView, cart, setCart, wishlist, setWishlist, products, setProducts,
+    categories, setCategories, // <-- Added categories here
     isCartOpen, setIsCartOpen, showSizeAI, setShowSizeAI, showVibeMatcher, setShowVibeMatcher,
     selectedProduct, setSelectedProduct, isMobileMenuOpen, setIsMobileMenuOpen,
     shopCategory, setShopCategory, user, setUser, isFlashing, setIsFlashing,
