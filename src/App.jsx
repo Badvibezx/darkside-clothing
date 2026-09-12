@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import darksideLogo from './assets/darkside-logo.png';
 import { 
   ShoppingBag, Heart, Search, Menu, X, 
   User, Zap, Crosshair, Smartphone, ChevronRight,
@@ -6,18 +7,18 @@ import {
   LayoutDashboard, Package, Users, Activity, Plus, Trash2,
   Box, Tag, AlertTriangle, MessageSquare, Lock,
   ArrowLeft, Star, Ruler, ChevronDown, ChevronUp, RefreshCw,
-  AlertOctagon, CheckCircle, HelpCircle, Mail, MapPin, Settings as SettingsIcon, LogOut as LogOutIcon, ChevronRight as ChevronRightIcon
+  AlertOctagon, CheckCircle, HelpCircle, Mail, MapPin, Settings as SettingsIcon, LogOut as LogOutIcon
 } from 'lucide-react';
 
 import { initializeApp } from 'firebase/app';
 import { 
-  getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged, 
+  getAuth, signInAnonymously, onAuthStateChanged, 
   signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut,
   RecaptchaVerifier, signInWithPhoneNumber, updateProfile
 } from 'firebase/auth';
-import { getFirestore, doc, setDoc, getDoc, collection, addDoc, query, onSnapshot, updateDoc } from 'firebase/firestore';
+import { getFirestore, doc, setDoc, getDoc, getDocs, collection, addDoc, query, where, onSnapshot, updateDoc } from 'firebase/firestore';
 
-// --- FIREBASE SETUP ---
+// --- FIREBASE INITIALIZATION ---
 const userConfig = {
   apiKey: "AIzaSyDEY-_Gz2qbhzIh7yGimqFY-GBEgMrxXmo",
   authDomain: "darkside-clothing.firebaseapp.com",
@@ -32,37 +33,39 @@ const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__f
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
-const appId = typeof __app_id !== 'undefined' ? __app_id : 'darkside-app';
+
+// Sanitize appId to ensure legal Firestore path hierarchy
+const rawAppId = typeof __app_id !== 'undefined' ? __app_id : 'darkside-app';
+const appId = String(rawAppId).replace(/\//g, '_');
 
 // --- INITIAL DATABASE ---
 const INITIAL_PRODUCTS = [
-  { id: 1, name: "VOID WALKER CARGO", price: 3499, category: "Bottoms", stock: 12, image: "https://images.unsplash.com/photo-1624378439575-d8705ad7ae80?auto=format&fit=crop&q=80&w=800", badge: "HIGH DEMAND" },
-  { id: 2, name: "CYBER-DOGMA HOODIE", price: 4299, category: "Outerwear", stock: 4, image: "https://images.unsplash.com/photo-1578681994506-b8f463449011?auto=format&fit=crop&q=80&w=800", badge: "FEW LEFT" },
-  { id: 3, name: "ACID WASH TEE V.2", price: 1899, category: "Tops", stock: 45, image: "https://images.unsplash.com/photo-1583743814966-8936f5b7be1a?auto=format&fit=crop&q=80&w=800" },
-  { id: 4, name: "NEON SYNDICATE JACKET", price: 5999, category: "Outerwear", stock: 2, image: "https://images.unsplash.com/photo-1551028919-ac66e624ec6a?auto=format&fit=crop&q=80&w=800", badge: "NEW DROP" },
-  { id: 5, name: "SYSTEM FAILURE BEANIE", price: 999, category: "Hardware", stock: 0, image: "https://images.unsplash.com/photo-1576871337622-98d48d1cf531?auto=format&fit=crop&q=80&w=800" },
-  { id: 6, name: "STEALTH TACTICAL VEST", price: 4599, category: "Outerwear", stock: 8, image: "https://images.unsplash.com/photo-1608231387042-66d1773070a5?auto=format&fit=crop&q=80&w=800" },
-];
-
-const AVATAR_PRESETS = [
-  "https://images.unsplash.com/photo-1535295972055-1c762f4483e5?auto=format&fit=crop&w=150&q=80",
-  "https://images.unsplash.com/photo-1618609377866-63640b615822?auto=format&fit=crop&w=150&q=80",
-  "https://images.unsplash.com/photo-1511367461989-f85a21fda167?auto=format&fit=crop&w=150&q=80",
-  "https://images.unsplash.com/photo-1542831371-29b0f74f9713?auto=format&fit=crop&w=150&q=80"
+  { id: 1, name: "VOID WALKER CARGO", price: 3499, category: "Bottoms", stock: 12, image: "https://images.unsplash.com/photo-1624378439575-d8705ad7ae80?auto=format&fit=crop&q=80&w=800", badge: "HIGH DEMAND", fitBlock: "relaxed-cargo" },
+  { id: 2, name: "CYBER-DOGMA HOODIE", price: 4299, category: "Outerwear", stock: 4, image: "https://images.unsplash.com/photo-1578681994506-b8f463449011?auto=format&fit=crop&q=80&w=800", badge: "FEW LEFT", fitBlock: "oversized-hoodie" },
+  { id: 3, name: "ACID WASH TEE V.2", price: 1899, category: "Tops", stock: 45, image: "https://images.unsplash.com/photo-1583743814966-8936f5b7be1a?auto=format&fit=crop&q=80&w=800", fitBlock: "oversized-boxy-tee" },
+  { id: 4, name: "NEON SYNDICATE JACKET", price: 5999, category: "Outerwear", stock: 2, image: "https://images.unsplash.com/photo-1551028919-ac66e624ec6a?auto=format&fit=crop&q=80&w=800", badge: "NEW DROP", fitBlock: "oversized-jacket" },
+  { id: 5, name: "SYSTEM FAILURE BEANIE", price: 999, category: "Hardware", stock: 0, image: "https://images.unsplash.com/photo-1576871337622-98d48d1cf531?auto=format&fit=crop&q=80&w=800", fitBlock: null },
+  { id: 6, name: "STEALTH TACTICAL VEST", price: 4599, category: "Outerwear", stock: 8, image: "https://images.unsplash.com/photo-1608231387042-66d1773070a5?auto=format&fit=crop&q=80&w=800", fitBlock: "oversized-jacket" },
 ];
 
 const callGeminiAPI = async (prompt, schema = null) => {
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`;
-  const payload = { contents: [{ parts: [{ text: prompt }] }], systemInstruction: { parts: [{ text: "You are a rogue, cyberpunk AI stylist for DARKSIDE CLOTHING INDIA. Speak with an edgy, dystopian tone." }] } };
-  if (schema) payload.generationConfig = { responseMimeType: "application/json", responseSchema: schema };
-
   const delays = [1000, 2000, 4000, 8000, 16000];
+
   for (let i = 0; i < 5; i++) {
     try {
-      const response = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
-      if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+      const response = await fetch('/api/gemini', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prompt, schema })
+      });
+
+      if (!response.ok) {
+        const errData = await response.json();
+        throw new Error(errData.error || `HTTP status ${response.status}`);
+      }
+
       const data = await response.json();
-      return data.candidates[0].content.parts[0].text;
+      return data.text;
     } catch (error) {
       if (i === 4) throw error;
       await new Promise(res => setTimeout(res, delays[i]));
@@ -70,7 +73,7 @@ const callGeminiAPI = async (prompt, schema = null) => {
   }
 };
 
-// --- ISOLATED COMPONENTS FOR STABILITY ---
+// --- ISOLATED UTILITY COMPONENTS ---
 const CustomCursor = () => {
   const [mousePos, setMousePos] = useState({ x: 0, y: 0 });
   const [isHoveringItem, setIsHoveringItem] = useState(false);
@@ -88,9 +91,9 @@ const CustomCursor = () => {
   return (
     <div 
       className="hidden md:flex fixed top-0 left-0 w-6 h-6 rounded-full pointer-events-none z-[99999] mix-blend-difference transition-transform duration-100 ease-out items-center justify-center"
-      style={{ transform: `translate(${mousePos.x - 12}px, ${mousePos.y - 12}px) scale(${isHoveringItem ? 2.5 : 1})`, backgroundColor: isHoveringItem ? 'transparent' : '#CCFF00', border: isHoveringItem ? '1px solid #CCFF00' : 'none' }}
+      style={{ transform: `translate(${mousePos.x - 12}px, ${mousePos.y - 12}px) scale(${isHoveringItem ? 2.5 : 1})`, backgroundColor: isHoveringItem ? 'transparent' : '#A6FF3D', border: isHoveringItem ? '1px solid #A6FF3D' : 'none' }}
     >
-      {isHoveringItem && <span className="text-[4px] font-mono text-[#CCFF00] font-bold">EXPLORE</span>}
+      {isHoveringItem && <span className="text-[4px] font-mono text-[#A6FF3D] font-bold">EXPLORE</span>}
     </div>
   );
 };
@@ -99,14 +102,23 @@ const CountdownTimer = () => {
   const [timeLeft, setTimeLeft] = useState({ h: 24, m: 0, s: 0 });
   useEffect(() => {
     const timer = setInterval(() => {
-      setTimeLeft(prev => { let { h, m, s } = prev; if (s > 0) s--; else if (m > 0) { m--; s = 59; } else if (h > 0) { h--; m = 59; s = 59; } return { h, m, s }; });
+      setTimeLeft(prev => { 
+        let { h, m, s } = prev; 
+        if (s > 0) s--; 
+        else if (m > 0) { m--; s = 59; } 
+        else if (h > 0) { h--; m = 59; s = 59; } 
+        return { h, m, s }; 
+      });
     }, 1000);
     return () => clearInterval(timer);
   }, []);
   return (
     <div className="flex justify-center gap-4 mb-8 font-mono">
       {[{ label: 'HRS', value: timeLeft.h }, { label: 'MIN', value: timeLeft.m }, { label: 'SEC', value: timeLeft.s }].map((t, i) => (
-        <div key={i} className="flex flex-col items-center"><span className="text-4xl md:text-6xl text-white font-black bg-[#0A0A0A] border border-white/10 p-4 w-20 md:w-24 text-center">{String(t.value).padStart(2, '0')}</span><span className="text-[10px] text-gray-500 mt-2">{t.label}</span></div>
+        <div key={i} className="flex flex-col items-center">
+          <span className="text-4xl md:text-6xl text-white font-black bg-[#0A0A0A] border border-white/10 p-4 w-20 md:w-24 text-center">{String(t.value).padStart(2, '0')}</span>
+          <span className="text-[10px] text-gray-500 mt-2">{t.label}</span>
+        </div>
       ))}
     </div>
   );
@@ -114,20 +126,33 @@ const CountdownTimer = () => {
 
 const SizePredictor = ({ appState }) => {
   const { theme, isLight, setShowSizeAI } = appState;
-  const [height, setHeight] = useState(''); const [weight, setWeight] = useState(''); const [fit, setFit] = useState('OVERSIZED (STREET)'); const [loading, setLoading] = useState(false); const [result, setResult] = useState('');
+  const [height, setHeight] = useState(''); 
+  const [weight, setWeight] = useState(''); 
+  const [fit, setFit] = useState('OVERSIZED (STREET)'); 
+  const [loading, setLoading] = useState(false); 
+  const [result, setResult] = useState('');
+
   const handleCalculate = async () => {
-    if (!height || !weight) return; setLoading(true); setResult('');
-    try { setResult(await callGeminiAPI(`Calculate the optimal clothing size (S, M, L, XL) for user: ${height}cm, ${weight}kg, prefers ${fit}. Reply ONLY size on line 1, edgy cyberpunk styling tip on line 2.`)); } 
-    catch (err) { setResult("SYSTEM ERROR: UNABLE TO CONNECT TO NEURAL NET."); } finally { setLoading(false); }
+    if (!height || !weight) return; 
+    setLoading(true); 
+    setResult('');
+    try { 
+      setResult(await callGeminiAPI(`Calculate optimal clothing size (S, M, L, XL) for: ${height}cm, ${weight}kg, style: ${fit}. Return ONLY size on line 1, edgy cyberpunk styling tip on line 2.`)); 
+    } catch (err) { 
+      setResult("SYSTEM ERROR: UNABLE TO CONNECT TO NEURAL NET."); 
+    } finally { 
+      setLoading(false); 
+    }
   };
+
   return (
     <div className="fixed inset-0 z-[70] bg-black/90 flex items-center justify-center p-4 backdrop-blur-sm">
-      <div className={`${isLight ? 'bg-white border-black/20' : 'bg-[#0A0A0A] border-[#CCFF00]/30'} border w-full max-w-md p-6 relative`}>
+      <div className={`${isLight ? 'bg-white border-black/20' : 'bg-[#0A0A0A] border-[#A6FF3D]/30'} border w-full max-w-md p-6 relative`}>
         <button onClick={() => setShowSizeAI(false)} className={`absolute top-4 right-4 ${theme.textMuted} hover:${theme.text}`}><X size={20} /></button>
-        <div className="flex items-center gap-2 mb-6"><Fingerprint className="text-[#8A2BE2]" /><h3 className={`text-xl font-bold uppercase tracking-wider ${theme.text}`} style={{ fontFamily: "'Impact', sans-serif" }}>AI Fit Predictor</h3></div>
+        <div className="flex items-center gap-2 mb-6"><Fingerprint className="text-[#C7CDD1]" /><h3 className={`text-xl font-bold uppercase tracking-wider ${theme.text}`} style={{ fontFamily: "'Impact', sans-serif" }}>AI Fit Predictor</h3></div>
         {result ? (
           <div className="space-y-4 font-mono text-sm animate-in fade-in zoom-in duration-500">
-             <div className={`p-4 border ${isLight ? 'border-[#8A2BE2] bg-[#8A2BE2]/10 text-[#8A2BE2]' : 'border-[#CCFF00] bg-[#CCFF00]/10 text-[#CCFF00]'}`}><p className="font-bold mb-2 uppercase">ANALYSIS COMPLETE:</p>{result.split('\n').map((line, i) => (<p key={i} className={i === 0 ? "text-2xl font-black mb-2" : `text-xs ${theme.textMuted}`}>{line}</p>))}</div>
+             <div className={`p-4 border ${isLight ? 'border-[#C7CDD1] bg-[#C7CDD1]/10 text-[#C7CDD1]' : 'border-[#A6FF3D] bg-[#A6FF3D]/10 text-[#A6FF3D]'}`}><p className="font-bold mb-2 uppercase">ANALYSIS COMPLETE:</p>{result.split('\n').map((line, i) => (<p key={i} className={i === 0 ? "text-2xl font-black mb-2" : `text-xs ${theme.textMuted}`}>{line}</p>))}</div>
              <button onClick={() => setShowSizeAI(false)} className={`w-full font-bold py-3 uppercase transition-colors ${theme.btnPrimary}`}>Acknowledge & Return</button>
           </div>
         ) : (
@@ -138,7 +163,7 @@ const SizePredictor = ({ appState }) => {
               <div><label className={`block mb-1 ${theme.accent}`}>WEIGHT (KG)</label><input type="number" value={weight} onChange={e => setWeight(e.target.value)} placeholder="e.g. 70" className={`w-full p-3 outline-none transition-colors ${theme.input}`} /></div>
               <div><label className={`block mb-1 ${theme.accent}`}>FIT PREFERENCE</label><select value={fit} onChange={e => setFit(e.target.value)} className={`w-full p-3 outline-none appearance-none cursor-pointer transition-colors ${theme.input}`}><option>OVERSIZED (STREET)</option><option>REGULAR (CLEAN)</option><option>SNUG (AERO)</option></select></div>
               <button onClick={handleCalculate} disabled={loading || !height || !weight} className={`w-full text-black font-bold py-4 mt-4 uppercase disabled:opacity-50 flex justify-center items-center gap-2 ${theme.btnPrimary}`}>
-                {loading ? <Loader2 className="animate-spin" size={18} /> : <Sparkles size={18} />}{loading ? "CALCULATING..." : "✨ PREDICT FIT"}
+                {loading ? <Loader2 className="animate-spin" size={18} /> : <Sparkles size={18} />}{loading ? "CALCULATING..." : "PREDICT FIT"}
               </button>
             </div>
           </>
@@ -149,36 +174,47 @@ const SizePredictor = ({ appState }) => {
 };
 
 const VibeMatcher = ({ appState }) => {
-  const { theme, isLight, setShowVibeMatcher, products, addToCart } = appState;
-  const [scenario, setScenario] = useState(''); const [loading, setLoading] = useState(false); const [recommendations, setRecommendations] = useState(null);
+  const { theme, isLight, setShowVibeMatcher, products, openProduct } = appState;
+  const [scenario, setScenario] = useState(''); 
+  const [loading, setLoading] = useState(false); 
+  const [recommendations, setRecommendations] = useState(null);
+
   const handleMatch = async () => {
-    if (!scenario) return; setLoading(true);
+    if (!scenario) return; 
+    setLoading(true);
     try {
       const catalogContext = products.map(p => `{id: ${p.id}, name: "${p.name}"}`).join(', ');
       const jsonText = await callGeminiAPI(`Scenario: "${scenario}". Pick 2 exact products matching vibe: [${catalogContext}].`, { type: "OBJECT", properties: { items: { type: "ARRAY", items: { type: "INTEGER" } }, reasoning: { type: "STRING" } }, required: ["items", "reasoning"] });
       const data = JSON.parse(jsonText);
       setRecommendations({ products: data.items.map(id => products.find(p => p.id === id)).filter(Boolean), reasoning: data.reasoning });
-    } catch (err) { setRecommendations({ error: "NEURAL LINK SEVERED. TRY AGAIN." }); } finally { setLoading(false); }
+    } catch (err) { 
+      setRecommendations({ error: "NEURAL LINK SEVERED. TRY AGAIN." }); 
+    } finally { 
+      setLoading(false); 
+    }
   };
+
   return (
     <div className="fixed inset-0 z-[70] bg-black/90 flex items-center justify-center p-4 backdrop-blur-sm">
-      <div className={`${isLight ? 'bg-white' : 'bg-[#0A0A0A]'} border border-[#8A2BE2]/50 w-full max-w-2xl p-6 relative`}>
+      <div className={`${isLight ? 'bg-white' : 'bg-[#0A0A0A]'} border border-[#C7CDD1]/50 w-full max-w-2xl p-6 relative`}>
         <button onClick={() => setShowVibeMatcher(false)} className={`absolute top-4 right-4 ${theme.textMuted} hover:${theme.text}`}><X size={20} /></button>
-        <div className="flex items-center gap-2 mb-2"><Sparkles className="text-[#8A2BE2]" /><h3 className={`text-2xl font-black uppercase tracking-wider ${theme.text}`} style={{ fontFamily: "'Impact', sans-serif" }}>AI Vibe Matcher</h3></div>
+        <div className="flex items-center gap-2 mb-2"><Sparkles className="text-[#C7CDD1]" /><h3 className={`text-2xl font-black uppercase tracking-wider ${theme.text}`} style={{ fontFamily: "'Impact', sans-serif" }}>AI Vibe Matcher</h3></div>
         <p className={`font-mono text-xs mb-6 ${theme.textMuted}`}>DESCRIBE YOUR DESTINATION. THE NEURAL NET WILL FORGE YOUR OUTFIT.</p>
         {!recommendations ? (
           <div className="space-y-4 font-mono">
-             <textarea value={scenario} onChange={e => setScenario(e.target.value)} placeholder="e.g., Underground techno rave in Berlin..." className={`w-full p-4 outline-none h-32 resize-none transition-colors ${theme.input}`} />
+             <textarea value={scenario} onChange={e => setScenario(e.target.value)} placeholder="e.g., Underground techno warehouse rave..." className={`w-full p-4 outline-none h-32 resize-none transition-colors ${theme.input}`} />
              <button onClick={handleMatch} disabled={loading || !scenario} className={`w-full font-bold py-4 uppercase transition-colors disabled:opacity-50 flex justify-center items-center gap-2 ${theme.btnPrimary}`}>
-                {loading ? <Loader2 className="animate-spin" size={18} /> : <Zap size={18} />}{loading ? "SCANNING CATALOG..." : "✨ GENERATE FIT"}
+                {loading ? <Loader2 className="animate-spin" size={18} /> : <Zap size={18} />}{loading ? "SCANNING CATALOG..." : "GENERATE FIT"}
               </button>
           </div>
-        ) : recommendations.error ? ( <p className="text-red-500 font-mono text-center py-8">{recommendations.error}</p> ) : (
+        ) : recommendations.error ? ( 
+          <p className="text-red-500 font-mono text-center py-8">{recommendations.error}</p> 
+        ) : (
           <div className="animate-in fade-in duration-500">
-             <div className={`p-4 border-l-4 border-[#8A2BE2] bg-[#8A2BE2]/10 mb-6 font-mono text-sm italic ${theme.text}`}>"{recommendations.reasoning}"</div>
+             <div className={`p-4 border-l-4 border-[#C7CDD1] bg-[#C7CDD1]/10 mb-6 font-mono text-sm italic ${theme.text}`}>"{recommendations.reasoning}"</div>
              <div className="grid grid-cols-2 gap-4 mb-6">
                {recommendations.products.map((p, idx) => (
-                 p ? <div key={p.id || idx} className={`border p-2 flex gap-3 ${theme.border} ${theme.card}`}><img src={p.image} className="w-16 h-20 object-cover grayscale" /><div className="flex flex-col justify-center"><p className={`font-bold text-xs uppercase ${theme.text}`}>{p.name}</p><p className={`font-mono text-xs mt-1 ${theme.accent}`}>₹{p.price}</p><button onClick={() => addToCart(p)} className="text-left text-[#8A2BE2] text-[10px] font-mono uppercase mt-2 hover:underline">+ Add to Cart</button></div></div> : null
+                 p ? <div key={p.id || idx} className={`border p-2 flex gap-3 ${theme.border} ${theme.card}`}><img src={p.image} className="w-16 h-20 object-cover grayscale" /><div className="flex flex-col justify-center"><p className={`font-bold text-xs uppercase ${theme.text}`}>{p.name}</p><p className={`font-mono text-xs mt-1 ${theme.accent}`}>₹{p.price}</p><button onClick={() => { setShowVibeMatcher(false); openProduct(p); }} className="text-left text-[#C7CDD1] text-[10px] font-mono uppercase mt-2 hover:underline">View & Select Size</button></div></div> : null
                ))}
              </div>
              <button onClick={() => setRecommendations(null)} className={`w-full border font-bold py-3 uppercase font-mono text-sm transition-colors ${theme.border} ${theme.text} hover:bg-gray-200`}>Reset Vibe</button>
@@ -196,29 +232,29 @@ const Navbar = ({ appState }) => {
     <nav className={`fixed top-0 w-full z-50 ${isLight ? 'bg-white/90 border-black/10' : 'bg-[#050505]/80 border-white/10'} backdrop-blur-lg border-b transition-colors duration-1000`}>
       <div className="max-w-7xl mx-auto px-4 h-20 flex items-center justify-between">
         <div className="flex items-center gap-4">
-          <Menu className={`md:hidden cursor-pointer ${isLight ? 'text-black hover:text-[#8A2BE2]' : 'text-white hover:text-[#CCFF00]'}`} onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)} />
+          <Menu className={`md:hidden cursor-pointer ${isLight ? 'text-black hover:text-[#C7CDD1]' : 'text-white hover:text-[#A6FF3D]'}`} onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)} />
           <div onClick={() => handleNavigate('home')} className="cursor-pointer relative z-50 flex items-center group">
-            <img src="451404688_834030975111165_2058569119566201452_n.jpg" alt="Darkside" className="h-14 md:h-16 object-contain group-hover:scale-105 transition-transform" style={{ filter: isLight ? 'invert(1)' : 'contrast(1.4) brightness(1.1)', mixBlendMode: isLight ? 'normal' : 'screen' }} onError={(e) => { e.target.onerror = null; e.target.src = `https://placehold.co/400x150/${isLight ? 'FFFFFF' : '050505'}/${isLight ? '000000' : 'CCFF00'}?text=YOUR+LOGO+HERE`; e.target.style.filter = "none"; e.target.style.mixBlendMode = "normal"; }} />
-            <h1 className={`hidden text-3xl font-black tracking-tighter cursor-pointer uppercase glitch-hover ${isLight ? 'text-black' : 'text-white'}`} style={{ fontFamily: "'Impact', sans-serif" }}>DARK<span className={isLight ? 'text-[#8A2BE2]' : 'text-[#CCFF00]'}>SIDE</span></h1>
+            <img src={darksideLogo} alt="Darkside" className="h-14 md:h-16 object-contain group-hover:scale-105 transition-transform" />
+            <h1 className={`hidden text-3xl font-black tracking-tighter cursor-pointer uppercase glitch-hover ${isLight ? 'text-black' : 'text-white'}`} style={{ fontFamily: "'Impact', sans-serif" }}>DARK<span className={isLight ? 'text-[#C7CDD1]' : 'text-[#A6FF3D]'}>SIDE</span></h1>
           </div>
         </div>
         <div className="hidden md:flex items-center space-x-8">
           {['Tees', 'Hoodies', 'Cargos'].map(link => (
-            <button key={link} onClick={() => { setShopCategory(link === 'Tees' ? 'Tops' : link === 'Hoodies' ? 'Outerwear' : 'Bottoms'); handleNavigate('shop'); }} className={`text-sm font-mono uppercase tracking-widest transition-colors magnetic ${isLight ? 'text-gray-600 hover:text-black' : 'text-[#E5E5E5] hover:text-[#CCFF00]'}`}>{link}</button>
+            <button key={link} onClick={() => { setShopCategory(link === 'Tees' ? 'Tops' : link === 'Hoodies' ? 'Outerwear' : 'Bottoms'); handleNavigate('shop'); }} className={`text-sm font-mono uppercase tracking-widest transition-colors magnetic ${isLight ? 'text-gray-600 hover:text-black' : 'text-[#E5E5E5] hover:text-[#A6FF3D]'}`}>{link}</button>
           ))}
         </div>
         <div className="flex items-center gap-5 md:gap-6">
           <Search className={`cursor-pointer hidden md:block w-5 h-5 ${theme.text} ${theme.accentHover}`} onClick={() => handleNavigate('shop')} />
           <div className="cursor-pointer" onClick={() => handleNavigate(user && !user.isAnonymous ? 'account' : 'auth')}>
-            {user && user.photoURL ? ( <img src={user.photoURL} alt="Profile" className="w-6 h-6 rounded-full border border-gray-500 object-cover" /> ) : ( <User className={`w-5 h-5 ${theme.text} ${theme.accentHover}`} /> )}
+            <User className={`w-5 h-5 ${theme.text} ${theme.accentHover}`} />
           </div>
           <div className="relative cursor-pointer hidden md:block" onClick={() => handleNavigate('vault')}>
-            <Heart className={`w-5 h-5 ${theme.text} hover:text-[#8A2BE2]`} />
-            {wishlist.length > 0 && <span className="absolute -top-2 -right-2 w-4 h-4 bg-[#8A2BE2] text-white text-[10px] font-bold flex items-center justify-center rounded-full">{wishlist.length}</span>}
+            <Heart className={`w-5 h-5 ${theme.text} hover:text-[#C7CDD1]`} />
+            {wishlist.length > 0 && <span className="absolute -top-2 -right-2 w-4 h-4 bg-[#C7CDD1] text-black text-[10px] font-bold flex items-center justify-center rounded-full">{wishlist.length}</span>}
           </div>
           <div className="relative cursor-pointer" onClick={() => { setIsCartOpen(true); setIsMobileMenuOpen(false); }}>
-            <ShoppingBag className={`w-5 h-5 ${theme.text} hover:text-[#8A2BE2]`} />
-            {cart.length > 0 && <span className={`absolute -top-2 -right-2 w-4 h-4 ${isLight ? 'bg-black text-white' : 'bg-[#CCFF00] text-black'} text-[10px] font-bold flex items-center justify-center rounded-full`}>{cart.length}</span>}
+            <ShoppingBag className={`w-5 h-5 ${theme.text} hover:text-[#C7CDD1]`} />
+            {cart.length > 0 && <span className={`absolute -top-2 -right-2 w-4 h-4 ${isLight ? 'bg-black text-white' : 'bg-[#A6FF3D] text-black'} text-[10px] font-bold flex items-center justify-center rounded-full`}>{cart.length}</span>}
           </div>
         </div>
       </div>
@@ -226,10 +262,10 @@ const Navbar = ({ appState }) => {
         <div className={`md:hidden border-b p-4 flex flex-col gap-4 absolute top-20 left-0 w-full z-40 ${isLight ? 'bg-white border-black/10' : 'bg-[#0A0A0A] border-white/10'}`}>
           {['Home', 'Shop', 'Vault', 'Help & FAQs', user && !user.isAnonymous ? 'Account' : 'Login'].map(link => (
             <button key={link} onClick={() => { 
-                if(link === 'Help & FAQs') handleNavigate('help');
-                else if(link === 'Login') handleNavigate('auth');
+                if (link === 'Help & FAQs') handleNavigate('help');
+                else if (link === 'Login') handleNavigate('auth');
                 else { setShopCategory('All Categories'); handleNavigate(link.toLowerCase()); }
-            }} className={`text-left font-mono uppercase py-2 border-b ${isLight ? 'text-black border-black/5 hover:text-[#8A2BE2]' : 'text-white border-white/5 hover:text-[#CCFF00]'}`}>{link}</button>
+            }} className={`text-left font-mono uppercase py-2 border-b ${isLight ? 'text-black border-black/5 hover:text-[#C7CDD1]' : 'text-white border-white/5 hover:text-[#A6FF3D]'}`}>{link}</button>
           ))}
         </div>
       )}
@@ -248,13 +284,36 @@ const AuthView = ({ appState }) => {
   const [isSignup, setIsSignup] = useState(false);
   const [error, setError] = useState(''); 
   const [loading, setLoading] = useState(false);
+
+  // Clean up Recaptcha instances safely on unmount
+  useEffect(() => {
+    return () => {
+      if (window.recaptchaVerifier) {
+        try {
+          window.recaptchaVerifier.clear();
+          window.recaptchaVerifier = null;
+        } catch (err) {
+          console.warn("Recaptcha verifier teardown:", err);
+        }
+      }
+    };
+  }, []);
   
   const handlePhoneChange = (e) => {
     const val = e.target.value.replace(/\D/g, '');
     if (val.length <= 10) setPhone(val);
   };
 
-  const navigateAfterAuth = (userObj) => {
+  const navigateAfterAuth = async (userObj) => {
+    try {
+      const adminDoc = await getDoc(doc(db, 'artifacts', appId, 'admins', userObj.uid));
+      if (adminDoc.exists()) {
+        handleNavigate('admin');
+        return;
+      }
+    } catch (e) {
+      console.warn("Admin validation error:", e);
+    }
     if (!userObj.displayName) {
       handleNavigate('profile-setup');
     } else {
@@ -267,14 +326,16 @@ const AuthView = ({ appState }) => {
     if (phone.length !== 10) return setError("IDENTIFIER FAILED: Must be exactly 10 digits.");
     setError(''); setLoading(true);
     try {
-      if (!window.recaptchaVerifier) { window.recaptchaVerifier = new RecaptchaVerifier(auth, 'recaptcha-container', { 'size': 'invisible' }); }
+      if (!window.recaptchaVerifier) { 
+        window.recaptchaVerifier = new RecaptchaVerifier(auth, 'recaptcha-container', { 'size': 'invisible' }); 
+      }
       const formatPhone = "+91" + phone;
       const confirmationResult = await signInWithPhoneNumber(auth, formatPhone, window.recaptchaVerifier);
       window.confirmationResult = confirmationResult;
       setOtpSent(true);
     } catch (err) {
       console.error("SMS Error", err);
-      if (err.code === 'auth/billing-not-enabled') setError("SMS FAILED: Firebase Billing (Blaze Plan) is required. Add your number to 'Testing Numbers' in Firebase Console to bypass.");
+      if (err.code === 'auth/billing-not-enabled') setError("SMS FAILED: Firebase Blaze Plan required. Add number to 'Testing Numbers' in console.");
       else setError(`SMS FAILED: ${err.message}`);
       if (window.recaptchaVerifier) { window.recaptchaVerifier.clear(); window.recaptchaVerifier = null; }
     } finally { setLoading(false); }
@@ -286,21 +347,25 @@ const AuthView = ({ appState }) => {
     setError(''); setLoading(true);
     try { 
       const result = await window.confirmationResult.confirm(otp);
-      navigateAfterAuth(result.user);
-    } catch (err) { setError("INVALID OTP. ACCESS DENIED."); } finally { setLoading(false); }
+      await navigateAfterAuth(result.user);
+    } catch (err) { 
+      setError("INVALID OTP. ACCESS DENIED."); 
+    } finally { 
+      setLoading(false); 
+    }
   };
 
   const handleEmailAuth = async (e) => {
     e.preventDefault();
     setError(''); setLoading(true);
-    if (email === 'admin@darkside.com' && password === 'darkside') {
-       setTimeout(() => { setLoading(false); handleNavigate('admin'); }, 800);
-       return;
-    }
     try { 
       const result = isSignup ? await createUserWithEmailAndPassword(auth, email, password) : await signInWithEmailAndPassword(auth, email, password); 
-      navigateAfterAuth(result.user);
-    } catch (err) { setError(err.message); } finally { setLoading(false); } 
+      await navigateAfterAuth(result.user);
+    } catch (err) { 
+      setError(err.message); 
+    } finally { 
+      setLoading(false); 
+    } 
   };
 
   return (
@@ -342,7 +407,6 @@ const AuthView = ({ appState }) => {
 const ProfileSetup = ({ appState }) => {
   const { handleNavigate, setUser } = appState;
   const [name, setName] = useState('');
-  const [avatarUrl, setAvatarUrl] = useState('');
   const [loading, setLoading] = useState(false);
 
   const handleSaveProfile = async (e) => {
@@ -350,27 +414,25 @@ const ProfileSetup = ({ appState }) => {
     if (!name.trim()) return;
     setLoading(true);
     try {
-      await updateProfile(auth.currentUser, { displayName: name, photoURL: avatarUrl });
-      setUser({...auth.currentUser, displayName: name, photoURL: avatarUrl});
+      await updateProfile(auth.currentUser, { displayName: name });
+      setUser({ ...auth.currentUser, displayName: name });
       handleNavigate('account');
-    } catch (err) { console.error(err); alert("Failed to update profile."); } finally { setLoading(false); }
+    } catch (err) { 
+      console.error(err); 
+      alert("Failed to update profile."); 
+    } finally { 
+      setLoading(false); 
+    }
   };
 
   return (
     <div className="min-h-screen bg-[#050505] text-[#E5E5E5] flex items-center justify-center p-4">
       <div className="w-full max-w-lg bg-[#0A0A0A] border border-[#333] p-8">
         <h2 className="text-3xl font-black uppercase tracking-tighter mb-2 text-white" style={{ fontFamily: "'Impact', sans-serif" }}>Identify Yourself</h2>
-        <p className="font-mono text-xs mb-8 text-gray-400">COMPLETE YOUR PROFILE PROJECTION TO CONTINUE.</p>
+        <p className="font-mono text-xs mb-8 text-gray-400">WHAT SHOULD WE CALL YOU?</p>
         <form onSubmit={handleSaveProfile} className="space-y-6 font-mono text-sm">
-          <div><label className="block mb-2 font-bold text-[#CCFF00]">OPERATIVE NAME *</label><input type="text" required value={name} onChange={e=>setName(e.target.value)} placeholder="Enter your display name..." className="w-full p-4 bg-black border border-[#333] text-white focus:border-[#CCFF00] outline-none" /></div>
-          <div>
-             <label className="block mb-2 font-bold text-[#CCFF00]">AVATAR PROJECTION (OPTIONAL)</label>
-             <div className="grid grid-cols-4 gap-2 mb-4">
-               {AVATAR_PRESETS.map((url, i) => (<div key={i} onClick={() => setAvatarUrl(url)} className={`cursor-pointer aspect-square border-2 overflow-hidden ${avatarUrl === url ? 'border-[#CCFF00]' : 'border-transparent opacity-50 hover:opacity-100'}`}><img src={url} alt={`preset-${i}`} className="w-full h-full object-cover grayscale hover:grayscale-0 transition-all" /></div>))}
-             </div>
-             <input type="url" value={avatarUrl} onChange={e=>setAvatarUrl(e.target.value)} placeholder="Or paste a custom image URL..." className="w-full p-3 bg-black border border-[#333] text-white text-xs focus:border-[#CCFF00] outline-none" />
-          </div>
-          <button disabled={loading || !name.trim()} type="submit" className="w-full bg-[#CCFF00] text-black font-black py-4 uppercase tracking-widest disabled:opacity-50 hover:bg-white transition-colors">{loading ? <Loader2 className="animate-spin mx-auto" size={20} /> : "Save & Enter Nexus"}</button>
+          <div><label className="block mb-2 font-bold text-[#A6FF3D]">NAME *</label><input type="text" required value={name} onChange={e=>setName(e.target.value)} placeholder="Enter your name..." className="w-full p-4 bg-black border border-[#333] text-white focus:border-[#A6FF3D] outline-none" /></div>
+          <button disabled={loading || !name.trim()} type="submit" className="w-full bg-[#A6FF3D] text-black font-black py-4 uppercase tracking-widest disabled:opacity-50 hover:bg-white transition-colors">{loading ? <Loader2 className="animate-spin mx-auto" size={20} /> : "Continue"}</button>
           <button type="button" onClick={() => handleNavigate('account')} className="w-full text-center text-xs text-gray-500 hover:text-white uppercase tracking-widest">Skip for now</button>
         </form>
       </div>
@@ -378,97 +440,128 @@ const ProfileSetup = ({ appState }) => {
   );
 };
 
-// --- REDESIGNED MYNTRA-STYLE ACCOUNT PAGE ---
 const Account = ({ appState }) => {
   const { theme, isLight, user, setUser, handleNavigate } = appState;
-  const [activeTab, setActiveTab] = useState('menu'); // 'menu', 'orders', 'addresses', 'settings'
+  const [activeTab, setActiveTab] = useState('menu');
   const [myOrders, setMyOrders] = useState([]);
   const [addrForm, setAddrForm] = useState({ address: '', city: '', state: '', pin: '' });
   const [savedAddr, setSavedAddr] = useState(null);
   const [updateName, setUpdateName] = useState(user?.displayName || '');
-  const [updateAvatar, setUpdateAvatar] = useState(user?.photoURL || '');
+  const [heightCm, setHeightCm] = useState('');
+  const [weightKg, setWeightKg] = useState('');
+  const [givenFeedback, setGivenFeedback] = useState({});
 
   useEffect(() => {
     let unsubOrders;
     if (user && activeTab === 'orders') {
-      unsubOrders = onSnapshot(query(collection(db, 'artifacts', appId, 'public', 'data', 'orders')), (snap) => {
-         const allOrders = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-         const userOrders = allOrders.filter(o => o.userId === user.uid).sort((a,b) => new Date(b.createdAt) - new Date(a.createdAt));
+      unsubOrders = onSnapshot(query(collection(db, 'artifacts', appId, 'public', 'data', 'orders'), where('userId', '==', user.uid)), (snap) => {
+         const userOrders = snap.docs.map(doc => ({ id: doc.id, ...doc.data() })).sort((a,b) => new Date(b.createdAt) - new Date(a.createdAt));
          setMyOrders(userOrders);
       }, (err) => console.error("Account orders fetch error:", err));
+
+      getDocs(query(collection(db, 'artifacts', appId, 'public', 'data', 'fitFeedback'), where('userId', '==', user.uid))).then(snap => {
+         const given = {};
+         snap.docs.forEach(d => { given[d.id] = true; });
+         setGivenFeedback(given);
+      }).catch(err => console.error(err));
     }
     if (user) {
       getDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'userdata', 'state')).then(docSnap => {
-         if (docSnap.exists() && docSnap.data().savedAddress) { setSavedAddr(docSnap.data().savedAddress); setAddrForm(docSnap.data().savedAddress); }
+         if (docSnap.exists()) {
+            const data = docSnap.data();
+            if (data.savedAddress) { setSavedAddr(data.savedAddress); setAddrForm(data.savedAddress); }
+            if (data.heightCm) setHeightCm(data.heightCm);
+            if (data.weightKg) setWeightKg(data.weightKg);
+         }
       }).catch(err => console.error(err));
     }
-    return () => { if(unsubOrders) unsubOrders(); };
+    return () => { if (unsubOrders) unsubOrders(); };
   }, [user, activeTab]);
 
   const handleSaveAddress = async (e) => {
     e.preventDefault();
-    try { await setDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'userdata', 'state'), { savedAddress: addrForm }, { merge: true }); setSavedAddr(addrForm); alert("Coordinates Saved."); } catch (err) { alert("Failed to save address."); }
+    try { 
+      await setDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'userdata', 'state'), { savedAddress: addrForm }, { merge: true }); 
+      setSavedAddr(addrForm); 
+      alert("Coordinates Saved."); 
+    } catch (err) { 
+      alert("Failed to save address."); 
+    }
   };
 
   const handleUpdateProfile = async (e) => {
     e.preventDefault();
-    if(!updateName) return;
-    try { await updateProfile(auth.currentUser, { displayName: updateName, photoURL: updateAvatar }); setUser({...auth.currentUser, displayName: updateName, photoURL: updateAvatar}); alert("Profile Update Complete."); setActiveTab('menu'); } catch(err) { alert("Update Failed."); }
+    if (!updateName) return;
+    try {
+      await updateProfile(auth.currentUser, { displayName: updateName });
+      setUser({ ...auth.currentUser, displayName: updateName });
+      await setDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'userdata', 'state'), { heightCm: heightCm || null, weightKg: weightKg || null }, { merge: true });
+      alert("Profile Update Complete."); 
+      setActiveTab('menu');
+    } catch(err) { 
+      alert("Update Failed."); 
+    }
   };
 
-  const handleLogout = () => { signOut(auth).then(()=>handleNavigate('home')); };
+  const handleFitFeedback = async (order, item, fit) => {
+    const feedbackId = `${order.id}_${item.cartItemId || item.id}`;
+    try {
+      await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'fitFeedback', feedbackId), {
+        userId: user.uid, productId: item.id, productName: item.name, fitBlock: item.fitBlock || null, size: item.selectedSize || null,
+        fit, heightCm: heightCm || null, weightKg: weightKg || null, createdAt: new Date().toISOString()
+      });
+      setGivenFeedback(prev => ({ ...prev, [feedbackId]: true }));
+    } catch (err) { 
+      console.error(err); 
+      alert("Couldn't save your feedback, please try again."); 
+    }
+  };
 
-  // Menu View (Myntra Style Grid)
+  const handleLogout = () => { signOut(auth).then(() => handleNavigate('home')); };
+
   if (activeTab === 'menu') {
     return (
       <div className="pt-24 px-4 max-w-4xl mx-auto min-h-screen pb-20 font-mono">
         <h2 className={`text-4xl font-black uppercase tracking-tighter mb-8 ${theme.text}`} style={{ fontFamily: "'Impact', sans-serif" }}>Account</h2>
         
-        {/* Profile Overview Card */}
         <div className={`${theme.card} border ${theme.border} p-6 flex items-center gap-6 mb-8`}>
-          {user?.photoURL ? (
-             <img src={user.photoURL} alt="Profile" className={`w-20 h-20 md:w-24 md:h-24 rounded-full object-cover border-2 ${theme.border}`} />
-          ) : (
-             <div className={`w-20 h-20 md:w-24 md:h-24 rounded-full flex items-center justify-center font-black text-3xl md:text-4xl ${isLight ? 'bg-black text-white' : 'bg-[#CCFF00] text-black'}`}>
-               {user?.displayName ? user.displayName.charAt(0).toUpperCase() : (user?.email ? user.email.charAt(0).toUpperCase() : 'A')}
-             </div>
-          )}
+          <div className={`w-20 h-20 md:w-24 md:h-24 rounded-full flex items-center justify-center font-black text-3xl md:text-4xl ${isLight ? 'bg-black text-white' : 'bg-[#A6FF3D] text-black'}`}>
+            {user?.displayName ? user.displayName.charAt(0).toUpperCase() : (user?.email ? user.email.charAt(0).toUpperCase() : 'A')}
+          </div>
           <div>
             <h3 className={`text-xl md:text-2xl font-bold uppercase ${theme.text}`}>{user?.displayName || 'OPERATIVE'}</h3>
             <p className={`text-xs md:text-sm mt-1 ${theme.textMuted}`}>{user?.email || user?.phoneNumber}</p>
-            <p className="inline-block mt-3 text-[#8A2BE2] text-[10px] md:text-xs font-bold bg-[#8A2BE2]/10 px-3 py-1 rounded-full border border-[#8A2BE2]/30">
+            <p className="inline-block mt-3 text-[#C7CDD1] text-[10px] md:text-xs font-bold bg-[#C7CDD1]/10 px-3 py-1 rounded-full border border-[#C7CDD1]/30">
               {user?.isAnonymous ? 'GUEST TIER' : 'INSIDER TIER'}
             </p>
           </div>
         </div>
 
-        {/* Options Grid */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          <button onClick={()=>setActiveTab('orders')} className={`${theme.card} border ${theme.border} p-6 text-left hover:border-[#8A2BE2] transition-colors group flex flex-col justify-between h-32`}>
+          <button onClick={() => setActiveTab('orders')} className={`${theme.card} border ${theme.border} p-6 text-left hover:border-[#C7CDD1] transition-colors group flex flex-col justify-between h-32`}>
              <div className="flex items-center gap-3 mb-2"><Package className={theme.text} size={24} /> <span className={`font-bold uppercase ${theme.text}`}>Orders</span></div>
              <p className={`text-xs ${theme.textMuted} group-hover:${theme.text}`}>Check your transmission history and fulfillment status.</p>
           </button>
           
-          <button onClick={()=>setActiveTab('addresses')} className={`${theme.card} border ${theme.border} p-6 text-left hover:border-[#8A2BE2] transition-colors group flex flex-col justify-between h-32`}>
+          <button onClick={() => setActiveTab('addresses')} className={`${theme.card} border ${theme.border} p-6 text-left hover:border-[#C7CDD1] transition-colors group flex flex-col justify-between h-32`}>
              <div className="flex items-center gap-3 mb-2"><MapPin className={theme.text} size={24} /> <span className={`font-bold uppercase ${theme.text}`}>Addresses</span></div>
              <p className={`text-xs ${theme.textMuted} group-hover:${theme.text}`}>Save drop coordinates for seamless rapid checkout.</p>
           </button>
           
-          <button onClick={()=>setActiveTab('settings')} className={`${theme.card} border ${theme.border} p-6 text-left hover:border-[#8A2BE2] transition-colors group flex flex-col justify-between h-32`}>
+          <button onClick={() => setActiveTab('settings')} className={`${theme.card} border ${theme.border} p-6 text-left hover:border-[#C7CDD1] transition-colors group flex flex-col justify-between h-32`}>
              <div className="flex items-center gap-3 mb-2"><SettingsIcon className={theme.text} size={24} /> <span className={`font-bold uppercase ${theme.text}`}>Profile Details</span></div>
-             <p className={`text-xs ${theme.textMuted} group-hover:${theme.text}`}>Modify your identity, operative name, and avatar.</p>
+             <p className={`text-xs ${theme.textMuted} group-hover:${theme.text}`}>Modify your identity, operative name, and sizing.</p>
           </button>
 
           <button onClick={handleLogout} className={`${theme.card} border ${theme.border} p-6 text-left hover:border-red-500 hover:bg-red-500/5 transition-colors group flex flex-col justify-between h-32 md:col-span-2 lg:col-span-3`}>
              <div className="flex items-center gap-3 mb-2 text-red-500"><LogOutIcon size={24} /> <span className="font-bold uppercase">Logout</span></div>
-             <p className="text-xs text-red-500/70 group-hover:text-red-500">Disconnect from the neural net and exit terminal.</p>
+             <p className="text-xs text-red-500/70 group-hover:text-red-500">Disconnect from the terminal.</p>
           </button>
         </div>
       </div>
     );
   }
 
-  // Sub-Views (Orders, Addresses, Settings)
   return (
     <div className="pt-24 px-4 max-w-4xl mx-auto min-h-screen pb-20 font-mono">
       <button onClick={() => setActiveTab('menu')} className={`${theme.textMuted} hover:${theme.text} text-xs mb-8 flex items-center gap-2 uppercase tracking-widest transition-colors`}>
@@ -484,19 +577,36 @@ const Account = ({ appState }) => {
              ) : (
                 <div className="space-y-6">
                    {myOrders.map(order => (
-                      <div key={order.id} className={`border ${theme.border} p-4 md:p-6 flex flex-col md:flex-row gap-6 justify-between items-start md:items-center bg-${isLight ? 'white' : 'black'}`}>
-                         <div>
-                            <div className="flex items-center gap-3 mb-2">
-                               <span className={`px-2 py-1 text-[10px] font-bold uppercase ${order.status === 'PENDING' ? 'bg-yellow-500/20 text-yellow-600 border border-yellow-500/30' : order.status === 'DELIVERED' ? 'bg-green-500/20 text-green-600 border border-green-500/30' : 'bg-[#8A2BE2]/20 text-[#8A2BE2] border border-[#8A2BE2]/30'}`}>{order.status}</span>
-                               <span className={`text-xs ${theme.textMuted}`}>{new Date(order.createdAt).toLocaleDateString()}</span>
+                      <div key={order.id} className={`border ${theme.border} p-4 md:p-6 flex flex-col gap-4 bg-${isLight ? 'white' : 'black'}`}>
+                         <div className="flex flex-col md:flex-row gap-6 justify-between items-start md:items-center">
+                            <div>
+                               <div className="flex items-center gap-3 mb-2">
+                                  <span className={`px-2 py-1 text-[10px] font-bold uppercase ${order.status === 'PENDING' ? 'bg-yellow-500/20 text-yellow-600 border border-yellow-500/30' : order.status === 'DELIVERED' ? 'bg-green-500/20 text-green-600 border border-green-500/30' : 'bg-[#C7CDD1]/20 text-[#C7CDD1] border border-[#C7CDD1]/30'}`}>{order.status}</span>
+                                  <span className={`text-xs ${theme.textMuted}`}>{new Date(order.createdAt).toLocaleDateString()}</span>
+                               </div>
+                               <p className={`text-xs mb-1 ${theme.textMuted}`}>ORDER ID: <span className={theme.text}>#{order.id.slice(0,10)}</span></p>
+                               <p className={`font-bold text-lg ${theme.accent}`}>₹{order.total}</p>
                             </div>
-                            <p className={`text-xs mb-1 ${theme.textMuted}`}>ORDER ID: <span className={theme.text}>#{order.id.slice(0,10)}</span></p>
-                            <p className={`font-bold text-lg ${theme.accent}`}>₹{order.total}</p>
+                            <div className="flex -space-x-4">
+                               {order.items.slice(0,3).map((item, idx) => (<img key={idx} src={item.image} className={`w-12 h-16 object-cover border-2 ${theme.card} rounded-sm grayscale hover:grayscale-0 transition-all`} title={item.name}/>))}
+                               {order.items.length > 3 && <div className={`w-12 h-16 flex items-center justify-center border-2 ${theme.card} bg-gray-800 text-white text-xs font-bold`}>+{order.items.length - 3}</div>}
+                            </div>
                          </div>
-                         <div className="flex -space-x-4">
-                            {order.items.slice(0,3).map((item, idx) => (<img key={idx} src={item.image} className={`w-12 h-16 object-cover border-2 ${theme.card} rounded-sm grayscale hover:grayscale-0 transition-all`} title={item.name}/>))}
-                            {order.items.length > 3 && <div className={`w-12 h-16 flex items-center justify-center border-2 ${theme.card} bg-gray-800 text-white text-xs font-bold`}>+{order.items.length - 3}</div>}
-                         </div>
+                         {order.status === 'DELIVERED' && order.items.filter(item => !givenFeedback[`${order.id}_${item.cartItemId || item.id}`]).length > 0 && (
+                            <div className={`border-t pt-4 ${theme.border}`}>
+                               <p className={`text-[10px] uppercase font-bold mb-3 ${theme.textMuted}`}>How did the fit feel? Helps us refine sizing.</p>
+                               {order.items.filter(item => !givenFeedback[`${order.id}_${item.cartItemId || item.id}`]).map((item, idx) => (
+                                  <div key={idx} className="flex flex-wrap items-center gap-3 mb-2 text-xs">
+                                     <span className={theme.text}>{item.name} (Size {item.selectedSize || 'N/A'})</span>
+                                     <div className="flex gap-2">
+                                        {['Too Tight', 'True to Size', 'Loose'].map(f => (
+                                           <button key={f} onClick={() => handleFitFeedback(order, item, f)} className={`px-3 py-1.5 border text-[10px] font-bold uppercase transition-colors ${isLight ? 'border-black/20 hover:border-black' : 'border-white/20 hover:border-[#A6FF3D] hover:text-[#A6FF3D]'}`}>{f}</button>
+                                        ))}
+                                     </div>
+                                  </div>
+                               ))}
+                            </div>
+                         )}
                       </div>
                    ))}
                 </div>
@@ -508,8 +618,8 @@ const Account = ({ appState }) => {
           <div className="animate-in fade-in max-w-xl mx-auto">
              <h3 className={`font-black text-2xl uppercase tracking-tighter mb-8 border-b ${theme.border} pb-4 ${theme.text}`} style={{ fontFamily: "'Impact', sans-serif" }}>Default Coordinates</h3>
              {savedAddr && (
-                <div className={`p-5 mb-8 border-l-4 border-[#8A2BE2] bg-[#8A2BE2]/10 text-sm ${theme.text}`}>
-                   <p className="font-bold text-[#8A2BE2] mb-2 uppercase flex items-center gap-2"><CheckCircle size={16}/> Active Coordinates</p>
+                <div className={`p-5 mb-8 border-l-4 border-[#C7CDD1] bg-[#C7CDD1]/10 text-sm ${theme.text}`}>
+                   <p className="font-bold text-[#C7CDD1] mb-2 uppercase flex items-center gap-2"><CheckCircle size={16}/> Active Coordinates</p>
                    <p>{savedAddr.address}</p>
                    <p>{savedAddr.city}, {savedAddr.state} - {savedAddr.pin}</p>
                 </div>
@@ -527,12 +637,18 @@ const Account = ({ appState }) => {
           <div className="animate-in fade-in max-w-xl mx-auto">
              <h3 className={`font-black text-2xl uppercase tracking-tighter mb-8 border-b ${theme.border} pb-4 ${theme.text}`} style={{ fontFamily: "'Impact', sans-serif" }}>Profile Details</h3>
              <form onSubmit={handleUpdateProfile} className="space-y-6 text-sm">
-                <div><label className={`block mb-2 font-bold ${theme.accent}`}>OPERATIVE NAME</label><input required value={updateName} onChange={e=>setUpdateName(e.target.value)} className={`w-full p-4 outline-none ${theme.input}`} /></div>
+                <div><label className={`block mb-2 font-bold ${theme.accent}`}>NAME</label><input required value={updateName} onChange={e=>setUpdateName(e.target.value)} className={`w-full p-4 outline-none ${theme.input}`} /></div>
+                {(user?.phoneNumber || user?.email) && (
+                   <div>
+                      <label className={`block mb-2 font-bold ${theme.accent}`}>{user?.phoneNumber ? 'PHONE NUMBER' : 'EMAIL'}</label>
+                      <div className={`w-full p-4 opacity-60 ${theme.input}`}>{user?.phoneNumber || user?.email}</div>
+                   </div>
+                )}
                 <div>
-                   <label className={`block mb-2 font-bold ${theme.accent}`}>AVATAR PROJECTION URL</label>
-                   <div className="flex gap-4 mb-4">
-                      {updateAvatar ? <img src={updateAvatar} className={`w-16 h-16 rounded-full object-cover border ${theme.border}`} /> : <div className={`w-16 h-16 rounded-full flex items-center justify-center ${theme.border} border border-dashed text-gray-500`}>N/A</div>}
-                      <div className="flex-1"><input value={updateAvatar} onChange={e=>setUpdateAvatar(e.target.value)} placeholder="Paste new image URL..." className={`w-full p-4 outline-none ${theme.input}`} /></div>
+                   <label className={`block mb-2 font-bold ${theme.accent}`}>HEIGHT & WEIGHT <span className={`font-normal normal-case ${theme.textMuted}`}>(optional — used to predict your size)</span></label>
+                   <div className="grid grid-cols-2 gap-4">
+                      <input type="number" min="0" value={heightCm} onChange={e=>setHeightCm(e.target.value)} placeholder="Height (cm)" className={`w-full p-4 outline-none ${theme.input}`} />
+                      <input type="number" min="0" value={weightKg} onChange={e=>setWeightKg(e.target.value)} placeholder="Weight (kg)" className={`w-full p-4 outline-none ${theme.input}`} />
                    </div>
                 </div>
                 <button type="submit" className={`w-full font-bold py-4 uppercase tracking-widest ${theme.btnPrimary}`}>Save Profile Changes</button>
@@ -551,112 +667,197 @@ const CheckoutView = ({ appState }) => {
   const [processing, setProcessing] = useState(false);
   const [showSuccessModal, setShowSuccessModal] = useState(false);
   const [fetchingCity, setFetchingCity] = useState(false);
+  const [fieldErrors, setFieldErrors] = useState({});
 
   useEffect(() => {
     if (user) {
-       setFormData(prev => ({ ...prev, name: user.displayName || '', phone: user.phoneNumber ? user.phoneNumber.replace('+91', '') : '' }));
+       setFormData(prev => ({ 
+         ...prev, 
+         name: user.displayName || '', 
+         phone: user.phoneNumber ? user.phoneNumber.replace('+91', '') : '' 
+       }));
        getDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'userdata', 'state')).then(docSnap => {
-          if (docSnap.exists() && docSnap.data().savedAddress) { setFormData(prev => ({ ...prev, ...docSnap.data().savedAddress })); }
+          if (docSnap.exists() && docSnap.data().savedAddress) { 
+            setFormData(prev => ({ ...prev, ...docSnap.data().savedAddress })); 
+          }
        }).catch(e => console.error(e));
     }
   }, [user]);
 
-  const handlePhoneChange = (e) => { const val = e.target.value.replace(/\D/g, '').slice(0, 10); setFormData({...formData, phone: val}); };
+  const handlePhoneChange = (e) => { 
+    const val = e.target.value.replace(/\D/g, '').slice(0, 10); 
+    setFormData(prev => ({ ...prev, phone: val })); 
+    setFieldErrors(prev => ({ ...prev, phone: null })); 
+  };
+
   const handlePinChange = async (e) => {
     const val = e.target.value.replace(/\D/g, '').slice(0, 6);
-    setFormData(prev => ({...prev, pin: val}));
+    setFormData(prev => ({ ...prev, pin: val }));
+    setFieldErrors(prev => ({ ...prev, pin: null }));
     if (val.length === 6) {
       setFetchingCity(true);
-      try { const res = await fetch(`https://api.postalpincode.in/pincode/${val}`); const data = await res.json(); if (data && data[0].Status === 'Success') { const po = data[0].PostOffice[0]; setFormData(prev => ({...prev, city: po.District, state: po.State})); } } catch (e) { console.error(e); } finally { setFetchingCity(false); }
+      try { 
+        const res = await fetch(`https://api.postalpincode.in/pincode/${val}`); 
+        const data = await res.json(); 
+        if (data && data[0] && data[0].Status === 'Success' && data[0].PostOffice?.[0]) { 
+          const po = data[0].PostOffice[0]; 
+          setFormData(prev => ({ ...prev, city: po.District || prev.city, state: po.State || prev.state })); 
+        } 
+      } catch (e) { 
+        console.warn("Postal API unavailable; fallback to manual input enabled:", e); 
+      } finally { 
+        setFetchingCity(false); 
+      }
     }
   };
 
+  const orderTotal = cartTotal > freeShippingThreshold ? cartTotal : cartTotal + 150;
+
   const handlePlaceOrder = async (e) => { 
     e.preventDefault(); 
-    if(!user) { alert("AUTHENTICATION REQUIRED."); return; }
-    if(formData.phone.length !== 10) { alert("PHONE MUST BE 10 DIGITS."); return; }
-    if(formData.pin.length !== 6) { alert("PINCODE MUST BE 6 DIGITS."); return; }
+    if (!user) { alert("AUTHENTICATION REQUIRED."); return; }
+    const errors = {};
+    if (formData.phone.length !== 10) errors.phone = "Phone must be exactly 10 digits.";
+    if (formData.pin.length !== 6) errors.pin = "Pincode must be exactly 6 digits.";
+    if (!formData.name.trim()) errors.name = "Name is required.";
+    if (!formData.address.trim()) errors.address = "Address is required.";
+    if (Object.keys(errors).length > 0) { setFieldErrors(errors); return; }
+    setFieldErrors({});
     setProcessing(true); 
     try {
-      const orderTotal = cartTotal > freeShippingThreshold ? cartTotal : cartTotal + 150;
       const displayUser = user.displayName || (user.email ? user.email.replace('@cyber.net', '') : 'Guest');
-      const orderData = { userId: user.uid, userEmail: displayUser, items: cart, total: orderTotal, shippingInfo: formData, paymentMode: paymentMode, status: 'PENDING', createdAt: new Date().toISOString() };
+      const orderData = { 
+        userId: user.uid, 
+        userEmail: displayUser, 
+        items: cart, 
+        total: orderTotal, 
+        shippingInfo: formData, 
+        paymentMode: paymentMode, 
+        status: 'PENDING', 
+        createdAt: new Date().toISOString() 
+      };
       await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'orders'), orderData);
-      setCart([]); saveUserData([], wishlist); setProcessing(false); setShowSuccessModal(true); 
-    } catch (err) { console.error("Order sync failed", err); alert("TRANSMISSION FAILED. PLEASE TRY AGAIN."); setProcessing(false); }
+      setCart([]); 
+      saveUserData([], wishlist); 
+      setProcessing(false); 
+      setShowSuccessModal(true); 
+    } catch (err) { 
+      console.error("Order sync failed", err); 
+      alert("TRANSMISSION FAILED. PLEASE TRY AGAIN."); 
+      setProcessing(false); 
+    }
   };
 
   if (showSuccessModal) {
     return (
       <div className="fixed inset-0 z-[999] bg-black flex items-center justify-center p-4">
-        <div className="bg-[#0A0A0A] border border-red-500/50 w-full max-w-lg p-8 relative flex flex-col items-center text-center animate-in fade-in zoom-in duration-500">
-          <div className="w-20 h-20 rounded-full bg-red-500/10 flex items-center justify-center mb-6"><AlertOctagon size={40} className="text-red-500 animate-pulse" /></div>
+        <div className="bg-[#0A0A0A] border border-[#A6FF3D]/40 shadow-[0_0_40px_rgba(166,255,61,0.1)] w-full max-w-lg p-8 relative flex flex-col items-center text-center animate-in">
+          <div className="w-20 h-20 rounded-full bg-[#A6FF3D]/10 flex items-center justify-center mb-6"><CheckCircle size={40} className="text-[#A6FF3D]" /></div>
           <h2 className="text-3xl font-black text-white uppercase tracking-tighter mb-2" style={{ fontFamily: "'Impact', sans-serif" }}>Order Secured</h2>
-          <p className="font-mono text-sm text-[#CCFF00] mb-6 tracking-widest">TRANSMISSION SUCCESSFUL</p>
-          <div className="bg-red-500/10 border border-red-500/30 p-5 mb-8 text-left"><h3 className="text-red-500 font-bold uppercase text-sm mb-2 flex items-center gap-2"><Lock size={16}/> Mandatory Protocol</h3><p className="font-mono text-xs text-gray-300 leading-relaxed">To combat tampering in the supply chain, you <span className="text-white font-bold underline">MUST</span> record a clear, continuous unboxing video when your package arrives. <br/><br/>No claims for missing or damaged items will be processed without unedited video evidence showing the sealed package being opened.</p></div>
-          <button onClick={() => { setShowSuccessModal(false); handleNavigate('account'); }} className="w-full bg-white text-black font-black py-4 uppercase tracking-widest hover:bg-[#CCFF00] transition-colors">I Acknowledge & Understand</button>
+          <p className="font-mono text-sm text-[#A6FF3D] mb-6 tracking-widest">TRANSMISSION SUCCESSFUL</p>
+          <div className="bg-[#D4B876]/10 border border-[#D4B876]/30 p-5 mb-8 text-left"><h3 className="text-[#D4B876] font-bold uppercase text-sm mb-2 flex items-center gap-2"><Lock size={16}/> Mandatory Protocol</h3><p className="font-mono text-xs text-gray-300 leading-relaxed">To protect transit security, you <span className="text-white font-bold underline">MUST</span> record a continuous unboxing video when your drop arrives. <br/><br/>Claims for damaged or missing pieces require unedited raw video evidence.</p></div>
+          <button onClick={() => { setShowSuccessModal(false); handleNavigate('account'); }} className="w-full bg-white text-black font-black py-4 uppercase tracking-widest hover:bg-[#A6FF3D] transition-colors">I Acknowledge & Understand</button>
         </div>
       </div>
     );
   }
 
   if (cart.length === 0) return (
-    <div className="pt-32 px-4 max-w-4xl mx-auto min-h-screen text-center"><h2 className={`text-4xl font-black uppercase tracking-tighter mb-4 ${theme.text}`} style={{ fontFamily: "'Impact', sans-serif" }}>Secure Checkout</h2><p className={`font-mono text-sm mb-6 ${theme.textMuted}`}>YOUR CART IS EMPTY. RETURN TO THE VOID.</p><button onClick={() => handleNavigate('shop')} className={`font-bold px-8 py-3 uppercase tracking-widest transition-colors ${theme.btnPrimary}`}>Back to Catalog</button></div>
+    <div className="pt-32 px-4 max-w-4xl mx-auto min-h-screen text-center animate-in"><h2 className={`text-4xl font-black uppercase tracking-tighter mb-4 ${theme.text}`} style={{ fontFamily: "'Impact', sans-serif" }}>Secure Checkout</h2><p className={`font-mono text-sm mb-6 ${theme.textMuted}`}>YOUR CART IS EMPTY.</p><button onClick={() => handleNavigate('shop')} className={`font-bold px-8 py-3 uppercase tracking-widest transition-colors ${theme.btnPrimary}`}>Back to Catalog</button></div>
   );
 
   return (
     <div className="pt-24 px-4 max-w-7xl mx-auto min-h-screen pb-20">
-      <h2 className={`text-4xl font-black uppercase tracking-tighter mb-8 ${theme.text}`} style={{ fontFamily: "'Impact', sans-serif" }}>Secure Checkout</h2>
+      <div className="flex items-center justify-between mb-8 opacity-0 animate-reveal-1">
+        <h2 className={`text-4xl font-black uppercase tracking-tighter ${theme.text}`} style={{ fontFamily: "'Impact', sans-serif" }}>Secure Checkout</h2>
+        <button onClick={() => handleNavigate('shop')} className={`hidden md:flex items-center gap-2 font-mono text-xs uppercase tracking-widest ${theme.textMuted} hover:${theme.text} transition-colors`}><ArrowLeft size={14} /> Edit Cart</button>
+      </div>
+      <div className="flex items-center gap-3 mb-10 font-mono text-xs uppercase tracking-widest opacity-0 animate-reveal-1">
+        <span className="flex items-center gap-2 text-[#A6FF3D]"><span className="w-6 h-6 rounded-full bg-[#A6FF3D] text-black flex items-center justify-center font-bold">1</span> Cart</span>
+        <div className="w-8 h-px bg-[#A6FF3D]"></div>
+        <span className="flex items-center gap-2 text-[#A6FF3D]"><span className="w-6 h-6 rounded-full bg-[#A6FF3D] text-black flex items-center justify-center font-bold">2</span> Details</span>
+        <div className={`w-8 h-px ${theme.border}`}></div>
+        <span className={`flex items-center gap-2 ${theme.textMuted}`}><span className={`w-6 h-6 rounded-full border ${theme.border} flex items-center justify-center font-bold`}>3</span> Confirmed</span>
+      </div>
       <div className="grid md:grid-cols-2 gap-12">
-        <form onSubmit={handlePlaceOrder} className="space-y-8">
-          <div className={`${theme.card} border ${theme.border} p-6`}>
-            <h3 className={`font-mono font-bold uppercase mb-4 border-b ${theme.border} pb-2 ${theme.accent}`}>1. Shipping Coordinates</h3>
-            <div className="space-y-4 font-mono text-sm">
-              <input required placeholder="FULL NAME" value={formData.name} onChange={e=>setFormData({...formData, name: e.target.value})} className={`w-full p-3 outline-none ${theme.input}`} />
-              <input required placeholder="PHONE NUMBER (10 DIGITS)" value={formData.phone} onChange={handlePhoneChange} className={`w-full p-3 outline-none ${theme.input}`} />
-              <input required placeholder="STREET ADDRESS & HOUSE NO." value={formData.address} onChange={e=>setFormData({...formData, address: e.target.value})} className={`w-full p-3 outline-none ${theme.input}`} />
-              <div className="grid grid-cols-3 gap-4">
-                <div className="col-span-1 relative"><input required placeholder="PINCODE" value={formData.pin} onChange={handlePinChange} className={`w-full p-3 outline-none ${theme.input}`} />{fetchingCity && <Loader2 size={14} className={`absolute right-3 top-4 animate-spin ${theme.accent}`} />}</div>
-                <input required placeholder="CITY" value={formData.city} onChange={e=>setFormData({...formData, city: e.target.value})} className={`col-span-1 w-full p-3 outline-none ${theme.input}`} />
-                <input required placeholder="STATE" value={formData.state} onChange={e=>setFormData({...formData, state: e.target.value})} className={`col-span-1 w-full p-3 outline-none ${theme.input}`} />
-              </div>
-            </div>
-          </div>
-          <div className={`${theme.card} border ${theme.border} p-6`}>
-            <h3 className={`font-mono font-bold uppercase mb-4 border-b ${theme.border} pb-2 ${theme.accent}`}>2. Payment Protocol</h3>
-            <div className="space-y-3 font-mono text-sm">
-              {['UPI', 'CREDIT/DEBIT CARD', 'CASH ON DELIVERY'].map(mode => (
-                <label key={mode} className={`flex items-center gap-3 p-4 border cursor-pointer transition-colors ${paymentMode === mode ? `border-[#8A2BE2] bg-[#8A2BE2]/10` : `${theme.border} hover:border-black/30`}`}><input type="radio" name="payment" value={mode} checked={paymentMode === mode} onChange={(e) => setPaymentMode(e.target.value)} className="accent-[#8A2BE2]" /><span className={`uppercase font-bold ${theme.text}`}>{mode}</span></label>
-              ))}
-            </div>
-          </div>
-          <button disabled={processing} type="submit" className={`w-full font-black py-5 uppercase tracking-widest text-lg disabled:opacity-50 flex justify-center items-center transition-colors ${theme.btnPrimary}`}>
-            {processing ? <Loader2 className="animate-spin" size={24} /> : `PLACE ORDER • ₹${cartTotal > freeShippingThreshold ? cartTotal : cartTotal + 150}`}
-          </button>
-        </form>
-        <div className={`${theme.card} border ${theme.border} p-6 h-fit sticky top-28`}>
+        <div className={`${theme.card} border ${theme.border} p-6 h-fit md:sticky md:top-28 order-1 md:order-2 opacity-0 animate-reveal-2 relative overflow-hidden`}>
+           <div className="absolute top-0 left-0 w-full h-[2px] bg-[#A6FF3D]/40 shadow-[0_0_15px_#A6FF3D] animate-scan-line pointer-events-none z-10"></div>
            <h3 className={`font-bold uppercase mb-6 border-b ${theme.border} pb-4 ${theme.text}`}>Order Summary</h3>
            <div className="space-y-4 mb-6 max-h-64 overflow-y-auto pr-2">
              {cart.map((item, idx) => (
-               <div key={idx} className="flex gap-4"><img src={item.image} className={`w-16 h-20 object-cover grayscale border ${theme.border}`} /><div className="flex-1 flex flex-col justify-center"><p className={`text-xs font-bold uppercase ${theme.text}`}>{item.name}</p><p className={`font-mono text-[10px] ${theme.textMuted}`}>QTY: 1</p><p className={`font-mono text-xs mt-1 ${theme.accent}`}>₹{item.price}</p></div></div>
+               <div key={item.cartItemId || idx} className="flex gap-4"><img src={item.image} className={`w-16 h-20 object-cover grayscale border ${theme.border}`} /><div className="flex-1 flex flex-col justify-center"><p className={`text-xs font-bold uppercase ${theme.text}`}>{item.name}</p><p className={`font-mono text-[10px] ${theme.textMuted}`}>SIZE: {item.selectedSize || 'N/A'} · QTY: 1</p><p className={`font-mono text-xs mt-1 ${theme.accent}`}>₹{item.price}</p></div></div>
              ))}
            </div>
            <div className={`border-t ${theme.border} pt-4 space-y-2 font-mono text-sm`}>
              <div className={`flex justify-between ${theme.textMuted}`}><span>SUBTOTAL</span><span>₹{cartTotal}</span></div>
              <div className={`flex justify-between ${theme.textMuted}`}><span>SHIPPING</span><span>{cartTotal > freeShippingThreshold ? 'FREE' : '₹150'}</span></div>
-             <div className={`flex justify-between font-bold text-lg pt-4 border-t ${theme.border} mt-2 ${theme.text}`}><span>TOTAL</span><span className={theme.accent}>₹{cartTotal > freeShippingThreshold ? cartTotal : cartTotal + 150}</span></div>
+             <div className={`flex justify-between font-bold text-lg pt-4 border-t ${theme.border} mt-2 ${theme.text}`}><span>TOTAL</span><span className={theme.accent}>₹{orderTotal}</span></div>
            </div>
         </div>
+        <form onSubmit={handlePlaceOrder} className="space-y-8 order-2 md:order-1">
+          <div className={`${theme.card} border ${theme.border} p-6 opacity-0 animate-reveal-2`}>
+            <h3 className={`font-mono font-bold uppercase mb-4 border-b ${theme.border} pb-2 ${theme.accent}`}>1. Shipping Coordinates</h3>
+            <div className="space-y-4 font-mono text-sm">
+              <div><input required placeholder="FULL NAME" value={formData.name} onChange={e=>{setFormData({...formData, name: e.target.value}); setFieldErrors(prev=>({...prev, name: null}));}} className={`w-full p-3 outline-none ${theme.input} ${fieldErrors.name ? 'border-red-500' : ''}`} />{fieldErrors.name && <p className="text-red-500 text-[10px] mt-1 uppercase">{fieldErrors.name}</p>}</div>
+              <div><input required placeholder="PHONE NUMBER (10 DIGITS)" value={formData.phone} onChange={handlePhoneChange} className={`w-full p-3 outline-none ${theme.input} ${fieldErrors.phone ? 'border-red-500' : ''}`} />{fieldErrors.phone && <p className="text-red-500 text-[10px] mt-1 uppercase">{fieldErrors.phone}</p>}</div>
+              <div><input required placeholder="STREET ADDRESS & HOUSE NO." value={formData.address} onChange={e=>{setFormData({...formData, address: e.target.value}); setFieldErrors(prev=>({...prev, address: null}));}} className={`w-full p-3 outline-none ${theme.input} ${fieldErrors.address ? 'border-red-500' : ''}`} />{fieldErrors.address && <p className="text-red-500 text-[10px] mt-1 uppercase">{fieldErrors.address}</p>}</div>
+              <div className="grid grid-cols-3 gap-4">
+                <div className="col-span-1 relative"><input required placeholder="PINCODE" value={formData.pin} onChange={handlePinChange} className={`w-full p-3 outline-none ${theme.input} ${fieldErrors.pin ? 'border-red-500' : ''}`} />{fetchingCity && <Loader2 size={14} className={`absolute right-3 top-4 animate-spin ${theme.accent}`} />}{fieldErrors.pin && <p className="text-red-500 text-[10px] mt-1 uppercase">{fieldErrors.pin}</p>}</div>
+                <input required placeholder="CITY" value={formData.city} onChange={e=>setFormData({...formData, city: e.target.value})} className={`col-span-1 w-full p-3 outline-none ${theme.input}`} />
+                <input required placeholder="STATE" value={formData.state} onChange={e=>setFormData({...formData, state: e.target.value})} className={`col-span-1 w-full p-3 outline-none ${theme.input}`} />
+              </div>
+            </div>
+          </div>
+          <div className={`${theme.card} border ${theme.border} p-6 opacity-0 animate-reveal-3`}>
+            <h3 className={`font-mono font-bold uppercase mb-4 border-b ${theme.border} pb-2 ${theme.accent}`}>2. Payment Protocol</h3>
+            <div className="space-y-3 font-mono text-sm">
+              {['UPI', 'CREDIT/DEBIT CARD', 'CASH ON DELIVERY'].map(mode => (
+                <label key={mode} className={`flex items-center gap-3 p-4 border cursor-pointer transition-all ${paymentMode === mode ? `border-[#A6FF3D] bg-[#A6FF3D]/10 shadow-[0_0_15px_rgba(166,255,61,0.1)]` : `${theme.border} hover:border-gray-500`}`}><input type="radio" name="payment" value={mode} checked={paymentMode === mode} onChange={(e) => setPaymentMode(e.target.value)} className="accent-[#A6FF3D]" /><span className={`uppercase font-bold ${theme.text}`}>{mode}</span></label>
+              ))}
+            </div>
+          </div>
+          <button disabled={processing} type="submit" className={`w-full font-black py-5 uppercase tracking-widest text-lg disabled:opacity-50 flex justify-center items-center transition-all relative overflow-hidden group opacity-0 animate-reveal-4 ${theme.btnPrimary} hover:shadow-[0_0_25px_rgba(166,255,61,0.35)]`}>
+            <div className="absolute inset-0 bg-white/20 translate-y-full group-hover:translate-y-0 transition-transform duration-300 ease-in-out z-0"></div>
+            <span className="relative z-10">{processing ? <Loader2 className="animate-spin" size={24} /> : `PLACE ORDER • ₹${orderTotal}`}</span>
+          </button>
+        </form>
       </div>
     </div>
   );
 };
 
 const HelpCenter = ({ appState }) => {
-  const { theme, isLight, user } = appState;
-  const [ticketMsg, setTicketMsg] = useState(''); const [ticketSent, setTicketSent] = useState(false); const [openFaq, setOpenFaq] = useState(null);
-  const faqs = [{ q: "Where is my order?", a: "Once processed, you will receive a tracking link. Pan-India delivery takes 48-72 hours." }, { q: "Do you offer returns?", a: "Yes, within 7 days. HOWEVER, an unedited unboxing video is strictly mandatory." }, { q: "What does 'Heavyweight Cotton' mean?", a: "We use 240GSM to 400GSM cotton. It is thicker, more durable, and drapes better." }, { q: "Do you restock sold-out items?", a: "Rarely. Join the WhatsApp underground list to get notified." }];
-  const handleSubmitTicket = async (e) => { e.preventDefault(); if(!ticketMsg.trim()) return; try { await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'tickets'), { userEmail: user?.displayName || (user?.email ? user.email.replace('@cyber.net', '') : 'Anonymous'), message: ticketMsg, status: 'OPEN', createdAt: new Date().toISOString(), reply: null }); setTicketSent(true); setTicketMsg(''); } catch (err) { console.error(err); alert("Failed to transmit."); } };
+  const { theme, user } = appState;
+  const [ticketMsg, setTicketMsg] = useState(''); 
+  const [ticketSent, setTicketSent] = useState(false); 
+  const [openFaq, setOpenFaq] = useState(null);
+
+  const faqs = [
+    { q: "Where is my order?", a: "Once dispatched, you will receive a tracking ID. Pan-India deliveries arrive within 48-72 hours." }, 
+    { q: "Do you offer returns?", a: "Yes, within 7 days. A raw, unedited unboxing video is strictly mandatory." }, 
+    { q: "What does 'Heavyweight Cotton' mean?", a: "We run custom 240GSM to 400GSM cotton. It yields structured drapes that do not lose form." }, 
+    { q: "Do you restock sold-out items?", a: "Drops are limited editions. Sign up for alerts to stay notified." }
+  ];
+
+  const handleSubmitTicket = async (e) => { 
+    e.preventDefault(); 
+    if (!ticketMsg.trim()) return; 
+    try { 
+      await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'tickets'), { 
+        userId: user?.uid || null, 
+        userEmail: user?.displayName || (user?.email ? user.email.replace('@cyber.net', '') : 'Anonymous'), 
+        message: ticketMsg, 
+        status: 'OPEN', 
+        createdAt: new Date().toISOString(), 
+        reply: null 
+      }); 
+      setTicketSent(true); 
+      setTicketMsg(''); 
+    } catch (err) { 
+      console.error(err); 
+      alert("Failed to transmit."); 
+    } 
+  };
 
   return (
     <div className="pt-24 px-4 max-w-4xl mx-auto min-h-screen pb-20">
@@ -683,25 +884,99 @@ const HelpCenter = ({ appState }) => {
 const ProductDetail = ({ appState }) => {
   const { theme, isLight, selectedProduct, setShowSizeAI, addToCart, toggleWishlist, wishlist } = appState;
   const [activeTab, setActiveTab] = useState('desc');
+  const [selectedSize, setSelectedSize] = useState(null);
+  const [sizeError, setSizeError] = useState(false);
+  const [fitStats, setFitStats] = useState(null);
+  const [activeImage, setActiveImage] = useState(0);
+  const [sizePopKey, setSizePopKey] = useState(0);
+  const [wishlistPop, setWishlistPop] = useState(false);
+  const [addedFeedback, setAddedFeedback] = useState(false);
+  const galleryImages = [selectedProduct.image, selectedProduct.image, selectedProduct.image];
+  const isWishlisted = !!wishlist.find(i => i.id === selectedProduct.id);
+
+  const handleAddToCart = () => {
+    if (!selectedSize) { setSizeError(true); return; }
+    setSizeError(false);
+    addToCart(selectedProduct, selectedSize);
+    setAddedFeedback(true);
+    setTimeout(() => setAddedFeedback(false), 1400);
+  };
+
+  const handleSelectSize = (s) => {
+    setSelectedSize(s);
+    setSizeError(false);
+    setSizePopKey(k => k + 1);
+  };
+
+  const handleToggleWishlist = () => {
+    toggleWishlist(selectedProduct);
+    setWishlistPop(true);
+    setTimeout(() => setWishlistPop(false), 400);
+  };
+
+  useEffect(() => {
+    setActiveImage(0);
+    if (!selectedProduct || !selectedProduct.fitBlock) { setFitStats(null); return; }
+    getDocs(query(collection(db, 'artifacts', appId, 'public', 'data', 'fitFeedback'), where('fitBlock', '==', selectedProduct.fitBlock)))
+      .then(snap => {
+        if (snap.empty) { setFitStats(null); return; }
+        const counts = { 'Too Tight': 0, 'True to Size': 0, 'Loose': 0 };
+        snap.docs.forEach(d => { const f = d.data().fit; if (counts[f] !== undefined) counts[f]++; });
+        const total = snap.size;
+        setFitStats({ total, trueToSizePct: Math.round((counts['True to Size'] / total) * 100), counts });
+      }).catch(err => console.error(err));
+  }, [selectedProduct]);
+
   return (
     <div className="pt-24 pb-32 md:pb-12 px-4 max-w-7xl mx-auto min-h-screen">
-       <button onClick={() => window.history.back()} className={`${theme.textMuted} hover:${theme.text} font-mono text-xs mb-8 flex items-center gap-2 uppercase tracking-widest transition-colors`}><ArrowLeft size={16} /> Back to Catalog</button>
+       <div className={`font-mono text-[10px] uppercase tracking-widest mb-6 flex items-center gap-2 ${theme.textMuted}`}>
+          <button onClick={() => window.history.back()} className={`hover:${theme.text} flex items-center gap-1 transition-colors`}><ArrowLeft size={12} /> Catalog</button>
+          <ChevronRight size={10} />
+          <span className={theme.text}>{selectedProduct.category}</span>
+       </div>
        <div className="grid md:grid-cols-2 gap-12 items-start">
-         <div className="space-y-4 md:sticky md:top-24">
-           <div className={`aspect-[4/5] ${theme.card} border ${theme.border} relative overflow-hidden group w-full`}><img src={selectedProduct.image} className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-105" alt={selectedProduct.name} />{selectedProduct.badge && <div className={`absolute top-4 left-4 text-[10px] font-bold px-3 py-1 uppercase tracking-widest ${isLight ? 'bg-black text-white' : 'bg-[#CCFF00] text-black'}`}>{selectedProduct.badge}</div>}</div>
-           <div className="grid grid-cols-3 gap-4 hidden md:grid">{[1,2,3].map(i => (<div key={i} className={`aspect-square ${theme.card} border ${theme.border} cursor-pointer hover:border-gray-400 overflow-hidden`}><img src={selectedProduct.image} className="w-full h-full object-cover opacity-70 hover:opacity-100 transition-opacity" /></div>))}</div>
+         <div className="space-y-3 md:sticky md:top-24 animate-in">
+           <div className={`aspect-[4/5] ${theme.card} border ${theme.border} relative overflow-hidden group w-full transition-shadow duration-500 hover:shadow-[0_0_30px_rgba(166,255,61,0.12)]`}>
+              <img key={activeImage} src={galleryImages[activeImage]} className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-105 animate-fade-swap" alt={selectedProduct.name} />
+              <div className="absolute top-0 left-0 w-full h-[2px] bg-[#A6FF3D]/40 shadow-[0_0_15px_#A6FF3D] animate-scan-line pointer-events-none z-10"></div>
+              {selectedProduct.badge && <div className={`absolute top-4 left-4 text-[10px] font-bold px-3 py-1 uppercase tracking-widest animate-pulse ${isLight ? 'bg-black text-white' : 'bg-[#A6FF3D] text-black'}`}>{selectedProduct.badge}</div>}
+              {selectedProduct.stock > 0 && selectedProduct.stock <= 5 && <div className="absolute top-4 right-4 text-[10px] font-bold px-3 py-1 uppercase tracking-widest bg-red-500 text-white flex items-center gap-1 animate-pulse"><AlertTriangle size={11} /> {selectedProduct.stock} left</div>}
+           </div>
+           <div className="grid grid-cols-3 gap-3 hidden md:grid">{galleryImages.map((img, i) => (<button key={i} onClick={() => setActiveImage(i)} className={`aspect-square ${theme.card} border overflow-hidden transition-colors ${activeImage === i ? (isLight ? 'border-black' : 'border-[#A6FF3D]') : `${theme.border} hover:border-gray-400`}`}><img src={img} className={`w-full h-full object-cover transition-opacity ${activeImage === i ? 'opacity-100' : 'opacity-60 hover:opacity-100'}`} /></button>))}</div>
          </div>
-         <div className="flex flex-col">
-           <div className="mb-6 border-b border-gray-200 pb-6"><div className="flex items-center gap-2 mb-3"><div className="flex text-[#8A2BE2] drop-shadow-sm">{[1,2,3,4,5].map(star => <Star key={star} size={14} fill="currentColor" />)}</div><span className={`text-xs font-mono ${theme.textMuted}`}>(128 Reviews)</span></div><h1 className={`text-4xl md:text-5xl font-black uppercase tracking-tighter mb-4 ${theme.text}`} style={{ fontFamily: "'Impact', sans-serif" }}>{selectedProduct.name}</h1><p className={`text-3xl font-mono ${isLight ? 'text-black font-extrabold' : 'text-[#E5E5E5]'}`}>₹{selectedProduct.price}</p></div>
-           <div className="mb-8"><div className="flex justify-between items-center mb-4"><span className={`font-bold uppercase tracking-widest text-sm ${theme.text}`}>Select Size</span><button onClick={() => setShowSizeAI(true)} className="text-[#8A2BE2] flex items-center gap-2 font-mono text-xs hover:underline cursor-pointer"><Ruler size={14} /> Size Guide</button></div><div className="grid grid-cols-4 gap-4">{['S', 'M', 'L', 'XL'].map(s => <button key={s} className={`h-14 border font-mono text-lg transition-colors ${isLight ? 'border-black/20 text-black hover:border-black hover:bg-black/5 focus:border-black focus:bg-black focus:text-white' : 'border-white/20 text-white hover:border-[#CCFF00] hover:text-[#CCFF00] focus:border-[#CCFF00] focus:bg-[#CCFF00]/10'}`}>{s}</button>)}</div></div>
-           <div className="hidden md:flex gap-4 mb-10"><button onClick={() => addToCart(selectedProduct)} className={`flex-1 font-black py-5 uppercase tracking-[0.2em] text-sm transition-colors ${theme.btnPrimary} relative overflow-hidden group`}><div className="absolute inset-0 bg-white/20 translate-y-full group-hover:translate-y-0 transition-transform duration-300 ease-in-out z-0"></div><span className="relative z-10 flex items-center justify-center gap-2"><ShoppingBag size={18} /> Add To Cart</span></button><button onClick={() => toggleWishlist(selectedProduct)} className={`w-16 flex items-center justify-center border transition-colors ${isLight ? 'border-black/20 text-black hover:border-black' : 'border-white/20 text-white hover:border-[#8A2BE2]'}`}><Heart fill={wishlist.find(i => i.id === selectedProduct.id) ? (isLight ? "#000" : "#8A2BE2") : "none"} /></button></div>
+         <div className="flex flex-col animate-in" style={{ animationDelay: '0.08s' }}>
+           <div className="mb-6 border-b border-gray-200 pb-6">
+              <div className="flex items-center gap-2 mb-3"><div className="flex text-[#C7CDD1] drop-shadow-sm">{[1,2,3,4,5].map(star => <Star key={star} size={14} fill="currentColor" />)}</div><span className={`text-xs font-mono ${theme.textMuted}`}>(128 Reviews)</span></div>
+              <h1 className={`text-4xl md:text-5xl font-black uppercase tracking-tighter mb-4 ${theme.text}`} style={{ fontFamily: "'Impact', sans-serif" }}>{selectedProduct.name}</h1>
+              <p className="text-3xl font-mono font-bold text-transparent bg-clip-text bg-gradient-to-r from-[#A6FF3D] to-[#C7CDD1]">₹{selectedProduct.price}</p>
+           </div>
+           <div className="mb-8">
+              <div className="flex justify-between items-center mb-4"><span className={`font-bold uppercase tracking-widest text-sm ${theme.text}`}>Select Size</span><button onClick={() => setShowSizeAI(true)} className="text-[#C7CDD1] flex items-center gap-2 font-mono text-xs hover:underline cursor-pointer"><Ruler size={14} /> Size Guide</button></div>
+              <div className="grid grid-cols-4 gap-4">{['S', 'M', 'L', 'XL'].map(s => <button key={s} onClick={() => handleSelectSize(s)} className={`h-14 border font-mono text-lg transition-colors ${selectedSize === s ? `${sizePopKey > 0 ? 'animate-size-pop' : ''} ${isLight ? 'border-black bg-black text-white' : 'border-[#A6FF3D] bg-[#A6FF3D]/10 text-[#A6FF3D]'}` : (isLight ? 'border-black/20 text-black hover:border-black hover:bg-black/5' : 'border-white/20 text-white hover:border-[#A6FF3D] hover:text-[#A6FF3D]')}`}>{s}</button>)}</div>
+              {sizeError && <p className="text-red-500 text-xs font-mono mt-3 uppercase animate-in">Please select a size to continue.</p>}
+              {fitStats && fitStats.total >= 3 && (
+                <p className={`text-xs font-mono mt-4 flex items-center gap-2 ${theme.textMuted}`}><ShieldCheck size={14} className="text-[#D4B876] shrink-0" /> {fitStats.trueToSizePct}% of {fitStats.total} verified buyers say this cut runs true to size</p>
+              )}
+           </div>
+           <div className="hidden md:flex gap-4 mb-10">
+              <button onClick={handleAddToCart} className={`flex-1 font-black py-5 uppercase tracking-[0.2em] text-sm transition-all ${theme.btnPrimary} relative overflow-hidden group hover:shadow-[0_0_25px_rgba(166,255,61,0.35)] ${addedFeedback ? 'animate-cart-success' : ''}`}>
+                 <div className="absolute inset-0 bg-white/20 translate-y-full group-hover:translate-y-0 transition-transform duration-300 ease-in-out z-0"></div>
+                 <span className="relative z-10 flex items-center justify-center gap-2">{addedFeedback ? (<><CheckCircle size={18} /> Added to Cart</>) : (<><ShoppingBag size={18} /> Add To Cart</>)}</span>
+              </button>
+              <button onClick={handleToggleWishlist} className={`w-16 flex items-center justify-center border transition-colors ${isLight ? 'border-black/20 text-black hover:border-black' : 'border-white/20 text-white hover:border-[#C7CDD1]'}`}><Heart className={wishlistPop ? 'animate-wishlist-pop' : ''} fill={isWishlisted ? (isLight ? "#000" : "#C7CDD1") : "none"} /></button>
+           </div>
            <div className="space-y-4">
-              <div className={`border ${theme.border} ${theme.card}`}><button onClick={() => setActiveTab(activeTab === 'desc' ? '' : 'desc')} className="w-full flex justify-between items-center p-4 font-bold uppercase tracking-widest text-sm">Product Details {activeTab === 'desc' ? <ChevronUp size={16}/> : <ChevronDown size={16}/>}</button>{activeTab === 'desc' && <div className={`p-4 pt-0 text-sm font-mono leading-relaxed ${theme.textMuted}`}>{selectedProduct.description || "Forged for the urban dystopia. This piece features advanced construction and proprietary fabric blends."}<ul className="mt-4 space-y-2 text-xs"><li className="flex items-center gap-2"><div className="w-1 h-1 bg-[#8A2BE2] rounded-full"></div> 100% Premium Heavyweight Cotton</li><li className="flex items-center gap-2"><div className="w-1 h-1 bg-[#8A2BE2] rounded-full"></div> Oversized drop-shoulder fit</li></ul></div>}</div>
-              <div className={`border ${theme.border} ${theme.card}`}><button onClick={() => setActiveTab(activeTab === 'ship' ? '' : 'ship')} className="w-full flex justify-between items-center p-4 font-bold uppercase tracking-widest text-sm">Shipping & Returns {activeTab === 'ship' ? <ChevronUp size={16}/> : <ChevronDown size={16}/>}</button>{activeTab === 'ship' && <div className={`p-4 pt-0 text-xs font-mono space-y-3 ${theme.textMuted}`}><p className="flex items-center gap-2"><Truck size={14} className={theme.accent} /> Express Pan-India delivery within 48-72 hours.</p><p className="flex items-center gap-2"><RefreshCw size={14} className="text-[#8A2BE2]" /> 7-day returns. Mandatory unboxing video required.</p></div>}</div>
+              <div className={`border ${theme.border} ${theme.card}`}><button onClick={() => setActiveTab(activeTab === 'desc' ? '' : 'desc')} className="w-full flex justify-between items-center p-4 font-bold uppercase tracking-widest text-sm">Product Details {activeTab === 'desc' ? <ChevronUp size={16}/> : <ChevronDown size={16}/>}</button>{activeTab === 'desc' && <div className={`p-4 pt-0 text-sm font-mono leading-relaxed animate-in ${theme.textMuted}`}>{selectedProduct.description || "Forged for the urban dystopia. This piece features advanced construction and heavyweight structural fabric."}<ul className="mt-4 space-y-2 text-xs"><li className="flex items-center gap-2"><div className="w-1 h-1 bg-[#C7CDD1] rounded-full"></div> 100% Premium Heavyweight Cotton</li><li className="flex items-center gap-2"><div className="w-1 h-1 bg-[#C7CDD1] rounded-full"></div> Oversized drop-shoulder fit</li></ul></div>}</div>
+              <div className={`border ${theme.border} ${theme.card}`}><button onClick={() => setActiveTab(activeTab === 'ship' ? '' : 'ship')} className="w-full flex justify-between items-center p-4 font-bold uppercase tracking-widest text-sm">Shipping & Returns {activeTab === 'ship' ? <ChevronUp size={16}/> : <ChevronDown size={16}/>}</button>{activeTab === 'ship' && <div className={`p-4 pt-0 text-xs font-mono space-y-3 animate-in ${theme.textMuted}`}><p className="flex items-center gap-2"><Truck size={14} className={theme.accent} /> Express Pan-India delivery within 48-72 hours.</p><p className="flex items-center gap-2"><RefreshCw size={14} className="text-[#C7CDD1]" /> 7-day returns. Mandatory unboxing video required.</p></div>}</div>
            </div>
          </div>
        </div>
-       <div className={`fixed bottom-0 left-0 right-0 p-4 ${isLight ? 'bg-white/90 border-black/10' : 'bg-black/90 border-white/10'} backdrop-blur-md border-t md:hidden z-40 transform transition-transform`}><div className="flex gap-2"><button onClick={() => toggleWishlist(selectedProduct)} className={`w-14 flex items-center justify-center border transition-colors ${isLight ? 'border-black/20 text-black hover:border-black' : 'border-white/20 text-white hover:border-[#8A2BE2]'}`}><Heart fill={wishlist.find(i => i.id === selectedProduct.id) ? (isLight ? "#000" : "#8A2BE2") : "none"} /></button><button onClick={() => addToCart(selectedProduct)} className={`flex-1 font-black py-4 uppercase tracking-widest flex justify-center items-center gap-2 ${theme.btnPrimary}`}><ShoppingBag size={18} /> ₹{selectedProduct.price}</button></div></div>
+       <div className={`fixed bottom-0 left-0 right-0 p-4 ${isLight ? 'bg-white/90 border-black/10' : 'bg-black/90 border-white/10'} backdrop-blur-md border-t md:hidden z-40 animate-slide-up-bar`}>
+          <div className="flex gap-2">
+             <button onClick={handleToggleWishlist} className={`w-14 flex items-center justify-center border transition-colors ${isLight ? 'border-black/20 text-black hover:border-black' : 'border-white/20 text-white hover:border-[#C7CDD1]'}`}><Heart className={wishlistPop ? 'animate-wishlist-pop' : ''} fill={isWishlisted ? (isLight ? "#000" : "#C7CDD1") : "none"} /></button>
+             <button onClick={handleAddToCart} className={`flex-1 font-black py-4 uppercase tracking-widest flex justify-center items-center gap-2 shadow-[0_0_20px_rgba(166,255,61,0.25)] ${theme.btnPrimary} ${addedFeedback ? 'animate-cart-success' : ''}`}>{addedFeedback ? (<><CheckCircle size={18} /> Added</>) : (<><ShoppingBag size={18} /> ₹{selectedProduct.price}</>)}</button>
+          </div>
+       </div>
     </div>
   );
 };
@@ -718,15 +993,15 @@ const Shop = ({ appState }) => {
       <div className="mb-6 md:mb-8">
         <div className="flex flex-col md:flex-row md:items-end justify-between gap-4 mb-6">
           <div><h2 className={`text-3xl md:text-5xl font-black uppercase tracking-tighter ${theme.text}`} style={{ fontFamily: "'Impact', sans-serif" }}>{shopCategory === 'All Categories' ? 'The Collection' : shopCategory}</h2><p className={`font-mono text-xs mt-1 md:mt-2 uppercase tracking-widest ${theme.textMuted}`}>[{filteredProducts.length} Items Detected]</p></div>
-          <div className="flex flex-wrap items-center gap-2 md:gap-4"><button onClick={() => setShowVibeMatcher(true)} className="flex-1 md:flex-none justify-center flex items-center gap-2 bg-[#8A2BE2]/10 text-[#8A2BE2] border border-[#8A2BE2]/30 px-4 py-2.5 font-mono text-xs uppercase hover:bg-[#8A2BE2] hover:text-white transition-all"><Sparkles size={14} /> AI Vibe Check</button><div className={`flex items-center border ${theme.border} px-3 py-2.5 flex-1 md:flex-none bg-transparent`}><span className={`text-[10px] uppercase font-bold mr-2 ${theme.textMuted}`}>Sort:</span><select value={sortBy} onChange={e => setSortBy(e.target.value)} className={`bg-transparent font-mono text-xs uppercase outline-none cursor-pointer ${theme.text} w-full`}><option value="recommended" className="bg-black text-white">Recommended</option><option value="price-high" className="bg-black text-white">Price: High to Low</option><option value="price-low" className="bg-black text-white">Price: Low to High</option></select></div></div>
+          <div className="flex flex-wrap items-center gap-2 md:gap-4"><button onClick={() => setShowVibeMatcher(true)} className="flex-1 md:flex-none justify-center flex items-center gap-2 bg-[#C7CDD1]/10 text-[#C7CDD1] border border-[#C7CDD1]/30 px-4 py-2.5 font-mono text-xs uppercase hover:bg-[#C7CDD1] hover:text-black transition-all"><Sparkles size={14} /> AI Vibe Check</button><div className={`flex items-center border ${theme.border} px-3 py-2.5 flex-1 md:flex-none bg-transparent`}><span className={`text-[10px] uppercase font-bold mr-2 ${theme.textMuted}`}>Sort:</span><select value={sortBy} onChange={e => setSortBy(e.target.value)} className={`bg-transparent font-mono text-xs uppercase outline-none cursor-pointer ${theme.text} w-full`}><option value="recommended" className="bg-black text-white">Recommended</option><option value="price-high" className="bg-black text-white">Price: High to Low</option><option value="price-low" className="bg-black text-white">Price: Low to High</option></select></div></div>
         </div>
-        <div className="flex gap-2 overflow-x-auto pb-2 scrollbar-hide">{['All Categories', ...categories].map(cat => (<button key={cat} onClick={() => setShopCategory(cat)} className={`whitespace-nowrap px-6 py-2.5 font-mono text-xs font-bold uppercase border transition-colors ${shopCategory === cat ? (isLight ? 'bg-black text-white border-black' : 'bg-[#CCFF00] text-black border-[#CCFF00]') : `border-${isLight?'black/10':'white/10'} ${theme.textMuted} hover:${theme.text} hover:border-${isLight?'black':'white'}`}`}>{cat}</button>))}</div>
+        <div className="flex gap-2 overflow-x-auto pb-2 scrollbar-hide">{['All Categories', ...categories].map(cat => (<button key={cat} onClick={() => setShopCategory(cat)} className={`whitespace-nowrap px-6 py-2.5 font-mono text-xs font-bold uppercase border transition-colors ${shopCategory === cat ? (isLight ? 'bg-black text-white border-black' : 'bg-[#A6FF3D] text-black border-[#A6FF3D]') : `border-${isLight?'black/10':'white/10'} ${theme.textMuted} hover:${theme.text} hover:border-${isLight?'black':'white'}`}`}>{cat}</button>))}</div>
       </div>
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 md:gap-6">
       {filteredProducts.map(product => (
         <div key={product.id} className="group cursor-pointer flex flex-col" onClick={() => openProduct(product)}>
-          <div className={`relative aspect-[3/4] ${theme.card} overflow-hidden border ${isLight ? 'border-black/5 group-hover:border-black/50' : 'border-white/5 group-hover:border-[#CCFF00]/50'} transition-colors mb-3`}><img src={product.image} alt={product.name} className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-105" />{product.badge && <div className={`absolute top-2 left-2 md:top-4 md:left-4 text-[8px] md:text-[10px] font-bold px-2 py-1 uppercase mix-blend-screen ${isLight ? 'bg-black text-white' : 'bg-white text-black'}`}>{product.badge}</div>}<div className="absolute inset-0 bg-[#8A2BE2] mix-blend-overlay opacity-0 group-hover:opacity-20 transition-opacity hidden md:block"></div></div>
-          <div className="flex flex-col flex-1"><h3 className={`font-bold uppercase tracking-tight text-[11px] md:text-sm mb-1 line-clamp-1 transition-colors ${theme.text} group-hover:text-[#8A2BE2]`}>{product.name}</h3><p className={`font-mono text-[9px] md:text-xs mb-2 ${theme.textMuted}`}>{product.category}</p><span className={`font-mono text-xs md:text-sm mt-auto ${isLight ? 'text-black font-extrabold' : 'text-[#E5E5E5] font-bold'}`}>₹{product.price}</span></div>
+          <div className={`relative aspect-[3/4] ${theme.card} overflow-hidden border ${isLight ? 'border-black/5 group-hover:border-black/50' : 'border-white/5 group-hover:border-[#A6FF3D]/50'} transition-colors mb-3`}><img src={product.image} alt={product.name} className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-105" />{product.badge && <div className={`absolute top-2 left-2 md:top-4 md:left-4 text-[8px] md:text-[10px] font-bold px-2 py-1 uppercase mix-blend-screen ${isLight ? 'bg-black text-white' : 'bg-white text-black'}`}>{product.badge}</div>}<div className="absolute inset-0 bg-[#C7CDD1] mix-blend-overlay opacity-0 group-hover:opacity-20 transition-opacity hidden md:block"></div></div>
+          <div className="flex flex-col flex-1"><h3 className={`font-bold uppercase tracking-tight text-[11px] md:text-sm mb-1 line-clamp-1 transition-colors ${theme.text} group-hover:text-[#C7CDD1]`}>{product.name}</h3><p className={`font-mono text-[9px] md:text-xs mb-2 ${theme.textMuted}`}>{product.category}</p><span className={`font-mono text-xs md:text-sm mt-auto ${isLight ? 'text-black font-extrabold' : 'text-[#E5E5E5] font-bold'}`}>₹{product.price}</span></div>
         </div>
       ))}
       </div>
@@ -739,35 +1014,64 @@ const AdminPanel = ({ appState }) => {
   const [adminView, setAdminView] = useState('dashboard');
   const [orders, setOrders] = useState([]);
   const [tickets, setTickets] = useState([]);
-  
-  // Marketing States
+  const [expandedOrderId, setExpandedOrderId] = useState(null);
+  const [isVerifiedAdmin, setIsVerifiedAdmin] = useState(null);
   const [promos, setPromos] = useState([{ code: 'NEON20', discount: '20% OFF', usage: '142 / 500', status: 'Active' }]);
-  
-  // CRM States
   const [crmSearch, setCrmSearch] = useState('');
-  
+
   useEffect(() => {
+    const verify = async () => {
+      if (!user) { setIsVerifiedAdmin(false); handleNavigate('home'); return; }
+      try {
+        const adminDoc = await getDoc(doc(db, 'artifacts', appId, 'admins', user.uid));
+        if (adminDoc.exists()) { 
+          setIsVerifiedAdmin(true); 
+        } else { 
+          setIsVerifiedAdmin(false); 
+          handleNavigate('home'); 
+        }
+      } catch (e) {
+        console.error("Admin verification failed:", e);
+        setIsVerifiedAdmin(false); 
+        handleNavigate('home');
+      }
+    };
+    verify();
+  }, [user]);
+
+  useEffect(() => {
+    if (!isVerifiedAdmin) return;
     let unsubOrders, unsubTickets;
     const authenticateAndFetch = async () => {
       try {
-        if (!user) await signInAnonymously(auth);
         unsubOrders = onSnapshot(query(collection(db, 'artifacts', appId, 'public', 'data', 'orders')), (snap) => {
           const loaded = snap.docs.map(doc => ({ id: doc.id, ...doc.data() })).sort((a,b) => new Date(b.createdAt) - new Date(a.createdAt)); 
           setOrders(loaded);
         }, (err) => console.error("Admin orders error:", err));
+        
         unsubTickets = onSnapshot(query(collection(db, 'artifacts', appId, 'public', 'data', 'tickets')), (snap) => {
           const loadedT = snap.docs.map(doc => ({ id: doc.id, ...doc.data() })).sort((a,b) => new Date(b.createdAt) - new Date(a.createdAt)); 
           setTickets(loadedT);
         }, (err) => console.error("Admin tickets error:", err)); 
-      } catch (authErr) { console.error("Admin Auth Error", authErr); }
-    }
+      } catch (authErr) { 
+        console.error("Admin Auth Error", authErr); 
+      }
+    };
     authenticateAndFetch();
-    return () => { if(unsubOrders) unsubOrders(); if(unsubTickets) unsubTickets(); };
-  }, [user]);
+    return () => { if (unsubOrders) unsubOrders(); if (unsubTickets) unsubTickets(); };
+  }, [user, isVerifiedAdmin]);
 
-  const handleReplyTicket = async (ticketId) => { const reply = prompt("Enter your reply to the user. This will mark the ticket as resolved."); if(reply) { try { await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'tickets', ticketId), { status: 'RESOLVED', reply: reply }); } catch(e){} } };
+  const handleReplyTicket = async (ticketId) => { 
+    const reply = prompt("Enter your reply to the user. This will mark the ticket as resolved."); 
+    if (reply) { 
+      try { 
+        await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'tickets', ticketId), { status: 'RESOLVED', reply: reply }); 
+      } catch (e) {
+        console.error(e);
+      } 
+    } 
+  };
 
-  // --- RESTORED ADMIN FUNCTIONALITIES ---
   const handleUpdateOrderStatus = async (orderId, newStatus) => {
      try {
        await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'orders', orderId), { status: newStatus });
@@ -783,15 +1087,18 @@ const AdminPanel = ({ appState }) => {
     const price = prompt("Enter price (INR):", "2999");
     const category = prompt(`Enter category (${categories.join('/')}):`, categories[0] || "Tops");
     const image = prompt("Paste Image URL:", "https://images.unsplash.com/photo-1556821840-3a63f95609a7?auto=format&fit=crop&q=80&w=800");
-    
+    const existingBlocks = [...new Set(products.map(p => p.fitBlock).filter(Boolean))];
+    const fitBlock = prompt(`Fit block cut pattern:\nExisting blocks: ${existingBlocks.join(', ') || 'none'}\nEnter block id:`, '');
+
     const newProduct = {
        id: Date.now(),
        name: name.toUpperCase(),
-       price: parseInt(price) || 2999,
+       price: parseInt(price, 10) || 2999,
        category: category || categories[0],
        stock: 10,
        image: image || "https://images.unsplash.com/photo-1556821840-3a63f95609a7?auto=format&fit=crop&q=80&w=800",
-       badge: "NEW DROP"
+       badge: "NEW DROP",
+       fitBlock: (fitBlock && fitBlock.trim()) || null
     };
     setProducts([newProduct, ...products]);
   };
@@ -809,7 +1116,6 @@ const AdminPanel = ({ appState }) => {
      }
   };
 
-  // Marketing Actions
   const handleAddPromo = () => {
     const code = prompt("Enter New Promo Code (e.g. CYBER50):");
     if (!code) return;
@@ -823,7 +1129,6 @@ const AdminPanel = ({ appState }) => {
     }
   };
 
-  // Derive CRM Users from Orders
   const crmUsersMap = {};
   orders.forEach(o => {
     if (!crmUsersMap[o.userEmail]) {
@@ -845,22 +1150,30 @@ const AdminPanel = ({ appState }) => {
   
   const totalRevenue = orders.reduce((sum, o) => sum + (o.total || 0), 0);
 
+  if (isVerifiedAdmin !== true) {
+    return (
+      <div className="min-h-screen bg-[#050505] text-[#E5E5E5] flex items-center justify-center font-mono">
+        <Loader2 className="animate-spin" size={24} />
+      </div>
+    );
+  }
+
   return (
-    <div className="min-h-screen bg-[#050505] text-[#E5E5E5] flex flex-col md:flex-row cursor-default font-mono selection:bg-[#CCFF00] selection:text-black">
+    <div className="min-h-screen bg-[#050505] text-[#E5E5E5] flex flex-col md:flex-row cursor-default font-mono selection:bg-[#A6FF3D] selection:text-black">
       <div className="w-full md:w-72 bg-[#0A0A0A] border-r border-[#333] flex flex-col h-screen sticky top-0">
-        <div className="p-6 border-b border-[#333] flex items-center justify-between bg-black"><div><h1 className="text-2xl font-black uppercase text-[#CCFF00]" style={{ fontFamily: "'Impact', sans-serif" }}>SYS.ADMIN</h1><p className="text-[10px] text-[#8A2BE2] mt-1">DRONA_HQ SECURE PROTOCOL</p></div><button onClick={() => handleNavigate('home')} className="text-gray-500 hover:text-white p-2 border border-[#333] bg-[#0A0A0A]"><X size={14} /></button></div>
-        <div className="p-4 space-y-1 flex-1 overflow-y-auto">{DronaTabs.map(item => (<button key={item.id} onClick={() => setAdminView(item.id)} className={`w-full flex items-center justify-between px-4 py-3 uppercase text-xs font-bold border transition-colors ${adminView === item.id ? 'bg-[#CCFF00]/10 border-[#CCFF00] text-[#CCFF00]' : 'border-transparent text-gray-500 hover:text-white hover:bg-white/5 hover:border-[#333]'}`}><div className="flex items-center gap-3"><item.icon size={14} /> {item.label}</div>{item.id === 'tickets' && tickets.filter(t=>t.status==='OPEN').length > 0 && <span className="bg-red-500 text-white px-2 py-0.5 rounded-full text-[10px]">{tickets.filter(t=>t.status==='OPEN').length}</span>}</button>))}</div>
-        <div className="p-4 border-t border-[#333] bg-black"><div className="flex items-center gap-3"><div className="w-8 h-8 rounded bg-[#8A2BE2] flex items-center justify-center font-bold text-white text-xs">AD</div><div><p className="text-xs font-bold text-white">MASTER ADMIN</p><p className="text-[10px] text-green-500 flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-green-500 inline-block animate-pulse"></span> ONLINE</p></div></div></div>
+        <div className="p-6 border-b border-[#333] flex items-center justify-between bg-black"><div><h1 className="text-2xl font-black uppercase text-[#A6FF3D]" style={{ fontFamily: "'Impact', sans-serif" }}>SYS.ADMIN</h1><p className="text-[10px] text-[#C7CDD1] mt-1">SECURE TERMINAL</p></div><button onClick={() => handleNavigate('home')} className="text-gray-500 hover:text-white p-2 border border-[#333] bg-[#0A0A0A]"><X size={14} /></button></div>
+        <div className="p-4 space-y-1 flex-1 overflow-y-auto">{DronaTabs.map(item => (<button key={item.id} onClick={() => setAdminView(item.id)} className={`w-full flex items-center justify-between px-4 py-3 uppercase text-xs font-bold border transition-colors ${adminView === item.id ? 'bg-[#A6FF3D]/10 border-[#A6FF3D] text-[#A6FF3D]' : 'border-transparent text-gray-500 hover:text-white hover:bg-white/5 hover:border-[#333]'}`}><div className="flex items-center gap-3"><item.icon size={14} /> {item.label}</div>{item.id === 'tickets' && tickets.filter(t=>t.status==='OPEN').length > 0 && <span className="bg-red-500 text-white px-2 py-0.5 rounded-full text-[10px]">{tickets.filter(t=>t.status==='OPEN').length}</span>}</button>))}</div>
+        <div className="p-4 border-t border-[#333] bg-black"><div className="flex items-center gap-3"><div className="w-8 h-8 rounded bg-[#C7CDD1] flex items-center justify-center font-bold text-black text-xs">AD</div><div><p className="text-xs font-bold text-white">MASTER ADMIN</p><p className="text-[10px] text-green-500 flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-green-500 inline-block animate-pulse"></span> ONLINE</p></div></div></div>
       </div>
       <div className="flex-1 p-4 md:p-8 h-screen overflow-y-auto bg-[url('https://www.transparenttextures.com/patterns/cubes.png')] bg-repeat">
         <div className="max-w-6xl mx-auto">
           
           {adminView === 'dashboard' && (
-            <div className="animate-in fade-in"><div className="flex justify-between items-end mb-8 border-b border-[#333] pb-4"><div><h2 className="text-2xl font-black uppercase text-white">Analytics Dashboard</h2><p className="text-xs text-gray-500 mt-1">Real-time visualization of key metrics</p></div><button onClick={() => window.print()} className="bg-[#CCFF00] text-black text-xs font-bold px-4 py-2 uppercase hover:bg-white transition-colors">Export PDF Report</button></div><div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8"><div className="bg-[#0A0A0A] border border-[#333] p-5"><p className="text-[10px] text-gray-500 mb-2 uppercase">Gross Revenue</p><p className="text-3xl text-[#CCFF00]">₹{totalRevenue}</p></div><div className="bg-[#0A0A0A] border border-[#333] p-5"><p className="text-[10px] text-gray-500 mb-2 uppercase">Order Volume</p><p className="text-3xl text-white">{orders.length}</p></div><div className="bg-[#0A0A0A] border border-[#333] p-5"><p className="text-[10px] text-gray-500 mb-2 uppercase">Open Tickets</p><p className="text-3xl text-red-500">{tickets.filter(t=>t.status==='OPEN').length}</p></div><div className="bg-[#0A0A0A] border border-[#333] p-5"><p className="text-[10px] text-gray-500 mb-2 uppercase">Cart Abandonment</p><p className="text-3xl text-white">64%</p></div></div></div>
+            <div className="animate-in fade-in"><div className="flex justify-between items-end mb-8 border-b border-[#333] pb-4"><div><h2 className="text-2xl font-black uppercase text-white">Analytics Dashboard</h2><p className="text-xs text-gray-500 mt-1">Live metrics overview</p></div><button onClick={() => window.print()} className="bg-[#A6FF3D] text-black text-xs font-bold px-4 py-2 uppercase hover:bg-white transition-colors">Export PDF Report</button></div><div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8"><div className="bg-[#0A0A0A] border border-[#333] p-5"><p className="text-[10px] text-gray-500 mb-2 uppercase">Gross Revenue</p><p className="text-3xl text-[#A6FF3D]">₹{totalRevenue}</p></div><div className="bg-[#0A0A0A] border border-[#333] p-5"><p className="text-[10px] text-gray-500 mb-2 uppercase">Order Volume</p><p className="text-3xl text-white">{orders.length}</p></div><div className="bg-[#0A0A0A] border border-[#333] p-5"><p className="text-[10px] text-gray-500 mb-2 uppercase">Open Tickets</p><p className="text-3xl text-red-500">{tickets.filter(t=>t.status==='OPEN').length}</p></div><div className="bg-[#0A0A0A] border border-[#333] p-5"><p className="text-[10px] text-gray-500 mb-2 uppercase">Cart Abandonment</p><p className="text-3xl text-white">64%</p></div></div></div>
           )}
           
           {adminView === 'tickets' && (
-            <div className="animate-in fade-in"><div className="flex justify-between items-end mb-8 border-b border-[#333] pb-4"><div><h2 className="text-2xl font-black uppercase text-white">Support Inbox</h2><p className="text-xs text-gray-500 mt-1">Resolve incoming transmissions</p></div></div><div className="space-y-4">{tickets.map(t => (<div key={t.id} className="bg-[#0A0A0A] border border-[#333] p-6"><div className="flex justify-between items-start mb-4"><div><span className="text-white font-bold">{t.userEmail}</span><span className="text-gray-500 text-[10px] ml-4">{new Date(t.createdAt).toLocaleString()}</span></div><span className={`text-[10px] font-bold px-2 py-1 uppercase ${t.status==='OPEN' ? 'bg-red-500/20 text-red-500' : 'bg-green-500/20 text-green-500'}`}>{t.status}</span></div><p className="text-sm text-gray-300 mb-4 pb-4 border-b border-[#333]">"{t.message}"</p>{t.status === 'OPEN' ? (<button onClick={()=>handleReplyTicket(t.id)} className="text-[#8A2BE2] text-xs font-bold uppercase hover:underline flex items-center gap-2"><MessageSquare size={14}/> Reply & Resolve</button>) : (<div className="text-xs text-gray-500"><span className="text-[#CCFF00] font-bold">ADMIN REPLY:</span> {t.reply}</div>)}</div>))}{tickets.length === 0 && <p className="text-center text-gray-500 py-8">NO INCOMING TRANSMISSIONS.</p>}</div></div>
+            <div className="animate-in fade-in"><div className="flex justify-between items-end mb-8 border-b border-[#333] pb-4"><div><h2 className="text-2xl font-black uppercase text-white">Support Inbox</h2><p className="text-xs text-gray-500 mt-1">Resolve incoming messages</p></div></div><div className="space-y-4">{tickets.map(t => (<div key={t.id} className="bg-[#0A0A0A] border border-[#333] p-6"><div className="flex justify-between items-start mb-4"><div><span className="text-white font-bold">{t.userEmail}</span><span className="text-gray-500 text-[10px] ml-4">{new Date(t.createdAt).toLocaleString()}</span></div><span className={`text-[10px] font-bold px-2 py-1 uppercase ${t.status==='OPEN' ? 'bg-red-500/20 text-red-500' : 'bg-green-500/20 text-green-500'}`}>{t.status}</span></div><p className="text-sm text-gray-300 mb-4 pb-4 border-b border-[#333]">"{t.message}"</p>{t.status === 'OPEN' ? (<button onClick={()=>handleReplyTicket(t.id)} className="text-[#C7CDD1] text-xs font-bold uppercase hover:underline flex items-center gap-2"><MessageSquare size={14}/> Reply & Resolve</button>) : (<div className="text-xs text-gray-500"><span className="text-[#A6FF3D] font-bold">ADMIN REPLY:</span> {t.reply}</div>)}</div>))}{tickets.length === 0 && <p className="text-center text-gray-500 py-8">NO INCOMING MESSAGES.</p>}</div></div>
           )}
           
           {adminView === 'orders' && (
@@ -869,20 +1182,22 @@ const AdminPanel = ({ appState }) => {
               <div className="bg-[#0A0A0A] border border-[#333] overflow-x-auto">
                 <table className="w-full text-left text-xs whitespace-nowrap">
                   <thead className="bg-[#111] text-gray-400 uppercase">
-                    <tr><th className="p-4 border-b border-[#333]">ID</th><th className="p-4 border-b border-[#333]">Customer</th><th className="p-4 border-b border-[#333]">Value</th><th className="p-4 border-b border-[#333]">Date</th><th className="p-4 border-b border-[#333]">Status Action</th></tr>
+                    <tr><th className="p-4 border-b border-[#333]"></th><th className="p-4 border-b border-[#333]">ID</th><th className="p-4 border-b border-[#333]">Customer</th><th className="p-4 border-b border-[#333]">Value</th><th className="p-4 border-b border-[#333]">Date</th><th className="p-4 border-b border-[#333]">Status Action</th></tr>
                   </thead>
                   <tbody className="text-gray-300">
                     {orders.map(o=>(
-                      <tr key={o.id} className="border-b border-[#333] hover:bg-[#111]">
+                      <React.Fragment key={o.id}>
+                      <tr className="border-b border-[#333] hover:bg-[#111] cursor-pointer" onClick={() => setExpandedOrderId(expandedOrderId === o.id ? null : o.id)}>
+                        <td className="p-4">{expandedOrderId === o.id ? <ChevronUp size={14} /> : <ChevronDown size={14} />}</td>
                         <td className="p-4">#{o.id.slice(0,8)}</td>
                         <td className="p-4">{o.userEmail}</td>
-                        <td className="p-4 text-[#CCFF00]">₹{o.total}</td>
+                        <td className="p-4 text-[#A6FF3D]">₹{o.total}</td>
                         <td className="p-4 text-gray-500">{new Date(o.createdAt).toLocaleDateString()}</td>
-                        <td className="p-4">
+                        <td className="p-4" onClick={(e) => e.stopPropagation()}>
                            <select 
                              value={o.status} 
                              onChange={(e) => handleUpdateOrderStatus(o.id, e.target.value)} 
-                             className={`bg-black border p-2 text-[10px] font-bold outline-none cursor-pointer ${o.status === 'PENDING' ? 'text-yellow-500 border-yellow-500/30' : o.status === 'DELIVERED' ? 'text-green-500 border-green-500/30' : 'text-[#8A2BE2] border-[#8A2BE2]/30'}`}
+                             className={`bg-black border p-2 text-[10px] font-bold outline-none cursor-pointer ${o.status === 'PENDING' ? 'text-yellow-500 border-yellow-500/30' : o.status === 'DELIVERED' ? 'text-green-500 border-green-500/30' : 'text-[#C7CDD1] border-[#C7CDD1]/30'}`}
                            >
                               <option value="PENDING">MARK PENDING</option>
                               <option value="SHIPPED">MARK SHIPPED</option>
@@ -890,8 +1205,40 @@ const AdminPanel = ({ appState }) => {
                            </select>
                         </td>
                       </tr>
+                      {expandedOrderId === o.id && (
+                        <tr className="border-b border-[#333] bg-[#0A0A0A]">
+                          <td colSpan="6" className="p-6">
+                            <div className="grid md:grid-cols-2 gap-6">
+                              <div>
+                                <p className="text-[#A6FF3D] font-bold uppercase mb-2 text-[10px]">Ship To</p>
+                                {o.shippingInfo ? (
+                                  <div className="text-gray-300 leading-relaxed">
+                                    <p>{o.shippingInfo.name}</p>
+                                    <p>{o.shippingInfo.address}</p>
+                                    <p>{o.shippingInfo.city}, {o.shippingInfo.state} - {o.shippingInfo.pin}</p>
+                                    <p>Phone: {o.shippingInfo.phone}</p>
+                                    <p className="mt-1 text-[#C7CDD1]">Payment: {o.paymentMode}</p>
+                                  </div>
+                                ) : <p className="text-gray-500">No shipping info on file.</p>}
+                              </div>
+                              <div>
+                                <p className="text-[#A6FF3D] font-bold uppercase mb-2 text-[10px]">Items</p>
+                                <div className="space-y-2">
+                                  {(o.items || []).map((item, i) => (
+                                    <div key={i} className="flex items-center gap-3 text-gray-300">
+                                      <img src={item.image} className="w-10 h-12 object-cover grayscale" />
+                                      <span>{item.name} — SIZE: {item.selectedSize || 'N/A'} — ₹{item.price}</span>
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+                            </div>
+                          </td>
+                        </tr>
+                      )}
+                      </React.Fragment>
                     ))}
-                    {orders.length === 0 && <tr><td colSpan="5" className="p-8 text-center text-gray-500">NO ORDERS DETECTED.</td></tr>}
+                    {orders.length === 0 && <tr><td colSpan="6" className="p-8 text-center text-gray-500">NO ORDERS DETECTED.</td></tr>}
                   </tbody>
                 </table>
               </div>
@@ -906,7 +1253,7 @@ const AdminPanel = ({ appState }) => {
                   <button onClick={handleAddCategory} className="bg-[#111] border border-[#333] text-white px-4 py-2 text-xs font-bold uppercase hover:bg-white hover:text-black transition-colors">
                     + Add Category
                   </button>
-                  <button onClick={handleAddProduct} className="bg-[#8A2BE2] text-white px-4 py-2 text-xs font-bold uppercase flex items-center gap-2 hover:bg-purple-600 transition-colors">
+                  <button onClick={handleAddProduct} className="bg-[#C7CDD1] text-black px-4 py-2 text-xs font-bold uppercase flex items-center gap-2 hover:bg-white transition-colors">
                     <Plus size={14}/> Inject Product
                   </button>
                 </div>
@@ -918,7 +1265,7 @@ const AdminPanel = ({ appState }) => {
                     <div className="p-4 flex flex-col flex-1">
                       <p className="text-xs text-white font-bold truncate uppercase">{p.name}</p>
                       <p className="text-[10px] text-gray-500 mb-2">{p.category}</p>
-                      <p className="text-[#CCFF00] text-xs font-bold mt-auto">₹{p.price}</p>
+                      <p className="text-[#A6FF3D] text-xs font-bold mt-auto">₹{p.price}</p>
                     </div>
                     <button onClick={() => handleDeleteProduct(p.id)} className="absolute top-2 right-2 bg-red-500 text-white p-2 opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-600 rounded-sm">
                       <Trash2 size={12}/>
@@ -929,13 +1276,12 @@ const AdminPanel = ({ appState }) => {
             </div>
           )}
 
-          {/* NEW: CRM TAB RESTORED */}
           {adminView === 'crm' && (
             <div className="animate-in fade-in">
               <div className="flex justify-between items-end mb-8 border-b border-[#333] pb-4">
                 <div>
                   <h2 className="text-2xl font-black uppercase text-white">Customer Relations</h2>
-                  <p className="text-xs text-gray-500 mt-1">Derived from transmission history</p>
+                  <p className="text-xs text-gray-500 mt-1">Derived from orders</p>
                 </div>
                 <div className="bg-black border border-[#333] flex items-center px-3">
                   <Search size={14} className="text-gray-500"/>
@@ -952,16 +1298,15 @@ const AdminPanel = ({ appState }) => {
                         <p className="text-[10px] text-gray-500 mt-1">LIFETIME VALUE</p>
                       </div>
                     </div>
-                    <div className="flex justify-between text-xs mb-1"><span className="text-gray-500">Total Spent:</span><span className="text-[#CCFF00] font-bold">₹{u.totalSpent}</span></div>
+                    <div className="flex justify-between text-xs mb-1"><span className="text-gray-500">Total Spent:</span><span className="text-[#A6FF3D] font-bold">₹{u.totalSpent}</span></div>
                     <div className="flex justify-between text-xs mb-4"><span className="text-gray-500">Total Orders:</span><span className="text-white font-bold">{u.orderCount}</span></div>
                   </div>
                 ))}
-                {crmUsers.length === 0 && <p className="text-gray-500 col-span-3 text-center py-8">NO CUSTOMER DATA MATCHED IN SECURE RECORDS.</p>}
+                {crmUsers.length === 0 && <p className="text-gray-500 col-span-3 text-center py-8">NO CUSTOMER DATA MATCHED IN RECORDS.</p>}
               </div>
             </div>
           )}
 
-          {/* NEW: MARKETING & PROMOS RESTORED */}
           {adminView === 'marketing' && (
             <div className="animate-in fade-in">
               <div className="flex justify-between items-end mb-8 border-b border-[#333] pb-4">
@@ -969,7 +1314,7 @@ const AdminPanel = ({ appState }) => {
                   <h2 className="text-2xl font-black uppercase text-white">Marketing & Promos</h2>
                   <p className="text-xs text-gray-500 mt-1">Manage active voucher codes</p>
                 </div>
-                <button onClick={handleAddPromo} className="bg-[#8A2BE2] text-white text-xs font-bold px-4 py-2 uppercase flex items-center gap-2 hover:bg-purple-600 transition-colors">
+                <button onClick={handleAddPromo} className="bg-[#C7CDD1] text-black text-xs font-bold px-4 py-2 uppercase flex items-center gap-2 hover:bg-white transition-colors">
                   <Plus size={14}/> Generate Promo
                 </button>
               </div>
@@ -982,7 +1327,7 @@ const AdminPanel = ({ appState }) => {
                     {promos.map((promo, i) => (
                       <tr key={i} className="border-b border-[#333] hover:bg-[#111] transition-colors">
                         <td className={`p-4 font-black text-lg ${promo.status === 'Active' ? 'text-white' : 'text-gray-500 line-through'}`}>{promo.code}</td>
-                        <td className={`p-4 font-bold ${promo.status === 'Active' ? 'text-[#CCFF00]' : 'text-gray-500'}`}>{promo.discount}</td>
+                        <td className={`p-4 font-bold ${promo.status === 'Active' ? 'text-[#A6FF3D]' : 'text-gray-500'}`}>{promo.discount}</td>
                         <td className="p-4 text-gray-500">{promo.usage}</td>
                         <td className="p-4">
                           {promo.status === 'Active' ? <span className="text-[9px] bg-green-500/10 text-green-500 border border-green-500/30 px-2 py-1 uppercase font-bold">Active</span> :
@@ -1008,14 +1353,14 @@ const AdminPanel = ({ appState }) => {
 };
 
 const Vault = ({ appState }) => {
-  const { theme, wishlist, addToCart } = appState;
+  const { theme, wishlist, openProduct } = appState;
   return (
     <div className="pt-24 px-4 max-w-7xl mx-auto min-h-screen text-center">
       <h2 className={`text-4xl font-black uppercase tracking-tighter mb-4 ${theme.text}`} style={{ fontFamily: "'Impact', sans-serif" }}>The Vault</h2>
       {wishlist.length === 0 ? ( <p className={`font-mono ${theme.textMuted}`}>YOUR VAULT IS EMPTY.</p> ) : (
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-8 text-left">
             {wishlist.map(w => (
-              <div key={w.id} className={`${theme.card} border ${theme.border} p-4`}><img src={w.image} className="w-full aspect-square object-cover mb-2 grayscale" /><p className={`text-xs font-bold uppercase truncate ${theme.text}`}>{w.name}</p><p className={`font-mono text-xs ${theme.accent}`}>₹{w.price}</p><button onClick={() => addToCart(w)} className={`w-full mt-2 text-[10px] font-bold py-2 uppercase transition-colors ${theme.btnPrimary}`}>Move to Cart</button></div>
+              <div key={w.id} className={`${theme.card} border ${theme.border} p-4`}><img src={w.image} className="w-full aspect-square object-cover mb-2 grayscale" /><p className={`text-xs font-bold uppercase truncate ${theme.text}`}>{w.name}</p><p className={`font-mono text-xs ${theme.accent}`}>₹{w.price}</p><button onClick={() => openProduct(w)} className={`w-full mt-2 text-[10px] font-bold py-2 uppercase transition-colors ${theme.btnPrimary}`}>Select Size & Add</button></div>
             ))}
           </div>
       )}
@@ -1030,26 +1375,26 @@ const Home = ({ appState }) => {
       <div className="relative min-h-screen pt-24 pb-12 flex flex-col items-center justify-center overflow-hidden bg-[#050505] border-b border-white/10 group">
         <div className="absolute inset-0 bg-[url('https://images.unsplash.com/photo-1492684223066-81342ee5ff30?auto=format&fit=crop&q=80')] bg-cover bg-center opacity-30 mix-blend-luminosity animate-pan-bg"></div>
         <div className="absolute inset-0 bg-gradient-to-b from-transparent via-[#050505]/50 to-[#050505]"></div>
-        <div className="absolute top-0 left-0 w-full h-[2px] bg-[#CCFF00]/40 shadow-[0_0_15px_#CCFF00] animate-scan-line pointer-events-none z-10"></div>
-        <div className="absolute top-32 left-8 text-[#CCFF00] font-mono text-[10px] tracking-widest opacity-40 hidden md:block animate-pulse">[ SYS.COORD : 28.6139° N, 77.2090° E ]<br/>INITIATING_PROTOCOL_V.9</div>
-        <div className="absolute bottom-16 right-8 flex items-center gap-4 hidden md:flex opacity-40"><div className="text-right text-gray-500 font-mono text-[10px] tracking-widest">TARGET ACQUIRED<br/>AWAITING DIRECTIVE</div><Crosshair size={32} className="text-[#8A2BE2] animate-spin-slow" /></div>
+        <div className="absolute top-0 left-0 w-full h-[2px] bg-[#A6FF3D]/40 shadow-[0_0_15px_#A6FF3D] animate-scan-line pointer-events-none z-10"></div>
+        <div className="absolute top-32 left-8 text-[#A6FF3D] font-mono text-[10px] tracking-widest opacity-40 hidden md:block animate-pulse">[ SYS.COORD : 28.6139° N, 77.2090° E ]<br/>INITIATING_PROTOCOL_V.9</div>
+        <div className="absolute bottom-16 right-8 flex items-center gap-4 hidden md:flex opacity-40"><div className="text-right text-gray-500 font-mono text-[10px] tracking-widest">TARGET ACQUIRED<br/>AWAITING DIRECTIVE</div><Crosshair size={32} className="text-[#C7CDD1] animate-spin-slow" /></div>
         <div className="relative z-10 text-center px-4 w-full max-w-4xl flex flex-col items-center mt-8">
-          <div className="opacity-0 animate-reveal-1 mb-8"><img src="451404688_834030975111165_2058569119566201452_n.jpg" alt="The Darkside" className="h-24 md:h-32 lg:h-40 mix-blend-screen object-contain drop-shadow-[0_0_30px_rgba(204,255,0,0.15)]" style={{ filter: 'contrast(1.5) brightness(1.2)' }} /></div>
+          <div className="opacity-0 animate-reveal-1 mb-8"><img src={darksideLogo} alt="The Darkside" className="h-24 md:h-32 lg:h-40 object-contain drop-shadow-[0_0_30px_rgba(166,255,61,0.15)]" /></div>
           <div className="mb-6 inline-flex items-center gap-2 bg-red-500/10 border border-red-500/50 text-red-500 px-4 py-1 text-xs font-mono font-bold tracking-widest animate-pulse opacity-0 animate-reveal-2"><Zap size={14} /> EXCLUSIVE DROP RELEASING IN</div>
           <div className="opacity-0 animate-reveal-3"><CountdownTimer /></div>
-          <h1 className="text-5xl md:text-7xl lg:text-8xl font-black text-white uppercase tracking-tighter mb-2 font-display opacity-0 animate-reveal-4">THE <span className="text-transparent bg-clip-text bg-gradient-to-r from-[#CCFF00] to-[#8A2BE2] glitch-hover" data-text="SYNDICATE">SYNDICATE</span> COLLECTION</h1>
+          <h1 className="text-5xl md:text-7xl lg:text-8xl font-black text-white uppercase tracking-tighter mb-2 font-display opacity-0 animate-reveal-4">THE <span className="text-transparent bg-clip-text bg-gradient-to-r from-[#A6FF3D] to-[#C7CDD1] glitch-hover" data-text="SYNDICATE">SYNDICATE</span> COLLECTION</h1>
           <p className="text-gray-400 font-mono tracking-[0.2em] uppercase text-sm mb-8 opacity-0 animate-reveal-4">Darkside — Embrace the light.</p>
           <div className="opacity-0 animate-reveal-4 mt-4 mb-8">
-            <button onClick={enterVault} className="bg-white text-black px-12 py-5 font-bold uppercase tracking-widest transition-all relative overflow-hidden group/btn border border-white hover:border-[#CCFF00] hover:shadow-[0_0_20px_rgba(204,255,0,0.3)]">
-              <div className="absolute inset-0 bg-[#CCFF00] translate-y-full group-hover/btn:translate-y-0 transition-transform duration-300 ease-in-out z-0"></div>
+            <button onClick={enterVault} className="bg-white text-black px-12 py-5 font-bold uppercase tracking-widest transition-all relative overflow-hidden group/btn border border-white hover:border-[#A6FF3D] hover:shadow-[0_0_20px_rgba(166,255,61,0.3)]">
+              <div className="absolute inset-0 bg-[#A6FF3D] translate-y-full group-hover/btn:translate-y-0 transition-transform duration-300 ease-in-out z-0"></div>
               <span className="relative z-10 flex items-center justify-center gap-3 group-hover/btn:text-black">Enter The Vault <ChevronRight size={18} className="group-hover/btn:translate-x-1 transition-transform" /></span>
             </button>
           </div>
         </div>
       </div>
-      <div className="w-full bg-[#CCFF00] py-3 overflow-hidden border-y border-black relative z-20 shadow-[0_0_20px_rgba(204,255,0,0.2)]">
+      <div className="w-full bg-[#A6FF3D] py-3 overflow-hidden border-y border-black relative z-20 shadow-[0_0_20px_rgba(166,255,61,0.2)]">
         <div className="animate-marquee whitespace-nowrap text-black font-bold font-mono text-sm tracking-widest flex items-center">
-          {[...Array(4)].map((_, i) => (<span key={i} className="mx-4">✦ DARKSIDE - EMBRACE THE LIGHT ✦ 100% HEAVYWEIGHT COTTON ✦ FREE SHIPPING PAN-INDIA ✦ CASH ON DELIVERY AVAILABLE ✦ NO REFUNDS FOR THE WEAK </span>))}
+          {[...Array(4)].map((_, i) => (<span key={i} className="mx-4">✦ DARKSIDE - EMBRACE THE LIGHT ✦ 100% HEAVYWEIGHT COTTON ✦ FREE SHIPPING PAN-INDIA ✦ CASH ON DELIVERY AVAILABLE ✦ NOT MADE FOR EVERYONE </span>))}
         </div>
       </div>
     </>
@@ -1070,7 +1415,7 @@ const Footer = ({ appState }) => {
           {joined ? (
             <div className={`font-bold font-mono text-sm uppercase ${theme.accent} flex items-center gap-2`}><CheckCircle size={16}/> Frequency Logged. Welcome.</div>
           ) : (
-            <form onSubmit={(e)=>{e.preventDefault(); if(email) setJoined(true);}} className="flex">
+            <form onSubmit={(e)=>{e.preventDefault(); if (email) setJoined(true);}} className="flex">
               <input type="email" required value={email} onChange={e=>setEmail(e.target.value)} placeholder="Email Identifier..." className={`bg-transparent border p-3 font-mono outline-none w-64 ${theme.input}`} />
               <button type="submit" className={`font-bold px-6 uppercase transition-colors ${theme.btnPrimary}`}>Join</button>
             </form>
@@ -1089,7 +1434,6 @@ const Footer = ({ appState }) => {
   );
 };
 
-// --- RENDER CONTENT CONTROLLER ---
 const AppContent = ({ appState }) => {
   const { view, selectedProduct } = appState;
   if (selectedProduct) return <ProductDetail appState={appState} />;
@@ -1107,13 +1451,12 @@ const AppContent = ({ appState }) => {
   }
 };
 
-// --- MAIN APP COMPONENT ---
 export default function App() {
   const [view, setView] = useState('home');
   const [cart, setCart] = useState([]);
   const [wishlist, setWishlist] = useState([]);
   const [products, setProducts] = useState(INITIAL_PRODUCTS);
-  const [categories, setCategories] = useState(['Outerwear', 'Tops', 'Bottoms', 'Hardware']); // DYNAMIC CATEGORIES
+  const [categories, setCategories] = useState(['Outerwear', 'Tops', 'Bottoms', 'Hardware']);
   const [isCartOpen, setIsCartOpen] = useState(false);
   const [showSizeAI, setShowSizeAI] = useState(false);
   const [showVibeMatcher, setShowVibeMatcher] = useState(false);
@@ -1131,10 +1474,10 @@ export default function App() {
     textMuted: isLight ? 'text-gray-600' : 'text-gray-400',
     border: isLight ? 'border-black/10' : 'border-white/10',
     card: isLight ? 'bg-gray-100' : 'bg-[#0A0A0A]',
-    input: isLight ? 'bg-white border-black/20 text-black focus:border-[#8A2BE2]' : 'bg-black border-white/20 text-white focus:border-[#CCFF00]',
-    btnPrimary: isLight ? 'bg-black text-white hover:bg-[#8A2BE2]' : 'bg-[#CCFF00] text-black hover:bg-white',
-    accent: isLight ? 'text-[#8A2BE2]' : 'text-[#CCFF00]',
-    accentHover: isLight ? 'hover:text-[#8A2BE2]' : 'hover:text-[#CCFF00]',
+    input: isLight ? 'bg-white border-black/20 text-black focus:border-[#C7CDD1]' : 'bg-black border-white/20 text-white focus:border-[#A6FF3D]',
+    btnPrimary: isLight ? 'bg-black text-white hover:bg-[#C7CDD1] hover:text-black' : 'bg-[#A6FF3D] text-black hover:bg-white',
+    accent: isLight ? 'text-[#C7CDD1]' : 'text-[#A6FF3D]',
+    accentHover: isLight ? 'hover:text-[#C7CDD1]' : 'hover:text-[#A6FF3D]',
   };
 
   const cartTotal = cart.reduce((sum, item) => sum + item.price, 0);
@@ -1158,9 +1501,17 @@ export default function App() {
         if (e.state.product) {
           const prod = products.find(p => p.id === e.state.product);
           setSelectedProduct(prod || null);
-        } else { setSelectedProduct(null); }
-        setIsCartOpen(false); setShowSizeAI(false); setShowVibeMatcher(false); setIsMobileMenuOpen(false);
-      } else { setView('home'); setSelectedProduct(null); }
+        } else { 
+          setSelectedProduct(null); 
+        }
+        setIsCartOpen(false); 
+        setShowSizeAI(false); 
+        setShowVibeMatcher(false); 
+        setIsMobileMenuOpen(false);
+      } else { 
+        setView('home'); 
+        setSelectedProduct(null); 
+      }
     };
     window.addEventListener('popstate', handlePopState);
     return () => window.removeEventListener('popstate', handlePopState);
@@ -1168,10 +1519,10 @@ export default function App() {
 
   useEffect(() => {
     const initAuth = async () => {
-      if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-        await signInWithCustomToken(auth, __initial_auth_token);
-      } else {
-        try { await signInAnonymously(auth); } catch (e) { console.error("Auth error:", e); }
+      try { 
+        await signInAnonymously(auth); 
+      } catch (e) { 
+        console.error("Auth init:", e); 
       }
     };
     initAuth();
@@ -1186,44 +1537,68 @@ export default function App() {
             if (data.cart) setCart(data.cart);
             if (data.wishlist) setWishlist(data.wishlist);
           }
-        } catch (err) { console.error("Error fetching user data", err); }
+        } catch (err) { 
+          console.error("User state fetch error:", err); 
+        }
       }
     });
     return () => unsubscribe();
   }, []);
 
   const handleNavigate = (newView) => {
-    setView(newView); setSelectedProduct(null); setIsMobileMenuOpen(false); window.scrollTo(0, 0);
+    setView(newView); 
+    setSelectedProduct(null); 
+    setIsMobileMenuOpen(false); 
+    window.scrollTo(0, 0);
     window.history.pushState({ view: newView, product: null }, '', '#' + newView);
   };
 
   const openProduct = (product) => {
-    setSelectedProduct(product); window.scrollTo(0, 0);
+    setSelectedProduct(product); 
+    window.scrollTo(0, 0);
     window.history.pushState({ view: view, product: product.id }, '', '#product-' + product.id);
   };
 
   const saveUserData = async (newCart, newWishlist) => {
     if (!user) return;
-    try { await setDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'userdata', 'state'), { cart: newCart, wishlist: newWishlist }, { merge: true }); } catch(e) {}
+    try { 
+      await setDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'userdata', 'state'), { cart: newCart, wishlist: newWishlist }, { merge: true }); 
+    } catch(e) {
+      console.error("Sync error:", e);
+    }
   };
 
   const enterVault = () => {
     if (typeof navigator !== 'undefined' && navigator.vibrate) navigator.vibrate([200, 50, 200]);
     setIsFlashing(true);
-    setTimeout(() => { handleNavigate('shop'); setTimeout(() => { setIsFlashing(false); }, 100); }, 500);
+    setTimeout(() => { 
+      handleNavigate('shop'); 
+      setTimeout(() => { setIsFlashing(false); }, 100); 
+    }, 500);
   };
 
   const toggleWishlist = (product) => {
     let newWishlist = wishlist.find(item => item.id === product.id) ? wishlist.filter(item => item.id !== product.id) : [...wishlist, product];
-    setWishlist(newWishlist); saveUserData(cart, newWishlist);
+    setWishlist(newWishlist); 
+    saveUserData(cart, newWishlist);
   };
   
-  const addToCart = (product) => { const newCart = [...cart, product]; setCart(newCart); setIsCartOpen(true); saveUserData(newCart, wishlist); };
-  const removeFromCart = (index) => { const newCart = cart.filter((_, i) => i !== index); setCart(newCart); saveUserData(newCart, wishlist); };
+  const addToCart = (product, size) => { 
+    const newCart = [...cart, { ...product, selectedSize: size, cartItemId: `${product.id}-${size}-${Date.now()}` }]; 
+    setCart(newCart); 
+    setIsCartOpen(true); 
+    saveUserData(newCart, wishlist); 
+  };
+  
+  const removeFromCart = (index) => { 
+    const newCart = cart.filter((_, i) => i !== index); 
+    setCart(newCart); 
+    saveUserData(newCart, wishlist); 
+  };
 
   const appState = {
     view, setView, cart, setCart, wishlist, setWishlist, products, setProducts,
-    categories, setCategories, // <-- Added categories here
+    categories, setCategories,
     isCartOpen, setIsCartOpen, showSizeAI, setShowSizeAI, showVibeMatcher, setShowVibeMatcher,
     selectedProduct, setSelectedProduct, isMobileMenuOpen, setIsMobileMenuOpen,
     shopCategory, setShopCategory, user, setUser, isFlashing, setIsFlashing,
@@ -1232,7 +1607,7 @@ export default function App() {
   };
 
   return (
-    <div className={`${theme.bg} ${theme.text} selection:bg-[#8A2BE2] selection:text-white min-h-screen cursor-none transition-colors duration-1000 ease-in-out`}>
+    <div className={`${theme.bg} ${theme.text} selection:bg-[#C7CDD1] selection:text-black min-h-screen cursor-none transition-colors duration-1000 ease-in-out`}>
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap');
         @import url('https://fonts.googleapis.com/css2?family=Oswald:wght@500;700&display=swap');
@@ -1243,14 +1618,25 @@ export default function App() {
         .animate-reveal-1 { animation: reveal 0.8s cubic-bezier(0.16, 1, 0.3, 1) forwards; } .animate-reveal-2 { animation: reveal 0.8s cubic-bezier(0.16, 1, 0.3, 1) 0.2s forwards; } .animate-reveal-3 { animation: reveal 0.8s cubic-bezier(0.16, 1, 0.3, 1) 0.4s forwards; } .animate-reveal-4 { animation: reveal 0.8s cubic-bezier(0.16, 1, 0.3, 1) 0.6s forwards; }
         @keyframes scan-line { 0% { top: 0; opacity: 0; } 10% { opacity: 1; } 90% { opacity: 1; } 100% { top: 100%; opacity: 0; } } .animate-scan-line { animation: scan-line 6s linear infinite; }
         @keyframes spin-slow { from { transform: rotate(0deg); } to { transform: rotate(360deg); } } .animate-spin-slow { animation: spin-slow 10s linear infinite; }
+        @keyframes fadeZoomIn { from { opacity: 0; transform: scale(0.97) translateY(6px); } to { opacity: 1; transform: scale(1) translateY(0); } }
+        .animate-in { animation: fadeZoomIn 0.35s cubic-bezier(0.16, 1, 0.3, 1) both; }
+        @keyframes sizePop { 0% { transform: scale(1); } 40% { transform: scale(1.08); } 100% { transform: scale(1); } }
+        .animate-size-pop { animation: sizePop 0.25s ease-out; }
+        @keyframes wishlistPop { 0% { transform: scale(1); } 35% { transform: scale(1.35); } 60% { transform: scale(0.92); } 100% { transform: scale(1); } }
+        .animate-wishlist-pop { animation: wishlistPop 0.4s cubic-bezier(0.34, 1.56, 0.64, 1); }
+        @keyframes slideUpBar { from { transform: translateY(100%); } to { transform: translateY(0); } }
+        .animate-slide-up-bar { animation: slideUpBar 0.4s cubic-bezier(0.16, 1, 0.3, 1) both; }
+        @keyframes cartSuccess { 0% { transform: scale(1); } 50% { transform: scale(1.04); } 100% { transform: scale(1); } }
+        .animate-cart-success { animation: cartSuccess 0.3s ease-out; }
+        @keyframes fadeSwap { from { opacity: 0.4; } to { opacity: 1; } }
+        .animate-fade-swap { animation: fadeSwap 0.3s ease-out; }
         @keyframes marquee { 0% { transform: translateX(0%); } 100% { transform: translateX(-25%); } } .animate-marquee { animation: marquee 12s linear infinite; width: fit-content; }
-        .glitch-hover { position: relative; } .glitch-hover:hover::before, .glitch-hover:hover::after { content: attr(data-text); position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: transparent; } .glitch-hover:hover::before { left: 2px; text-shadow: -1px 0 #CCFF00; animation: glitch-anim-1 2s infinite linear alternate-reverse; } .glitch-hover:hover::after { left: -2px; text-shadow: -1px 0 #8A2BE2; animation: glitch-anim-2 3s infinite linear alternate-reverse; }
+        .glitch-hover { position: relative; } .glitch-hover:hover::before, .glitch-hover:hover::after { content: attr(data-text); position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: transparent; } .glitch-hover:hover::before { left: 2px; text-shadow: -1px 0 #A6FF3D; animation: glitch-anim-1 2s infinite linear alternate-reverse; } .glitch-hover:hover::after { left: -2px; text-shadow: -1px 0 #C7CDD1; animation: glitch-anim-2 3s infinite linear alternate-reverse; }
         @keyframes glitch-anim-1 { 0% { clip-path: inset(20% 0 80% 0); } 20% { clip-path: inset(60% 0 10% 0); } 40% { clip-path: inset(40% 0 50% 0); } 60% { clip-path: inset(80% 0 5% 0); } 80% { clip-path: inset(10% 0 70% 0); } 100% { clip-path: inset(30% 0 20% 0); } } @keyframes glitch-anim-2 { 0% { clip-path: inset(10% 0 60% 0); } 20% { clip-path: inset(80% 0 5% 0); } 40% { clip-path: inset(30% 0 20% 0); } 60% { clip-path: inset(70% 0 10% 0); } 80% { clip-path: inset(20% 0 50% 0); } 100% { clip-path: inset(50% 0 30% 0); } }
-        ::-webkit-scrollbar { width: 8px; } ::-webkit-scrollbar-track { background: ${isLight ? '#f3f4f6' : '#050505'}; } ::-webkit-scrollbar-thumb { background: ${isLight ? '#d1d5db' : '#222'}; } ::-webkit-scrollbar-thumb:hover { background: #8A2BE2; }
+        ::-webkit-scrollbar { width: 8px; } ::-webkit-scrollbar-track { background: ${isLight ? '#f3f4f6' : '#050505'}; } ::-webkit-scrollbar-thumb { background: ${isLight ? '#d1d5db' : '#222'}; } ::-webkit-scrollbar-thumb:hover { background: #C7CDD1; }
         .scrollbar-hide::-webkit-scrollbar { display: none; } .scrollbar-hide { -ms-overflow-style: none; scrollbar-width: none; }
       `}</style>
 
-      {/* BLINDING FLASH OVERLAY */}
       <div className={`fixed inset-0 bg-white z-[9999] pointer-events-none transition-opacity duration-500 ease-in-out ${isFlashing ? 'opacity-100' : 'opacity-0'}`} aria-hidden="true" />
 
       {view !== 'admin' && view !== 'profile-setup' && <CustomCursor />}
@@ -1264,18 +1650,17 @@ export default function App() {
       {showSizeAI && <SizePredictor appState={appState} />}
       {showVibeMatcher && <VibeMatcher appState={appState} />}
 
-      {/* SLIDE OUT CART */}
       {isCartOpen && (
         <div className="fixed inset-0 z-[60] flex justify-end">
           <div className="absolute inset-0 bg-black/80 backdrop-blur-sm cursor-pointer" onClick={() => setIsCartOpen(false)}></div>
           <div className={`w-full max-w-md ${isLight ? 'bg-white' : 'bg-[#050505]'} h-full border-l ${theme.border} flex flex-col relative z-10 transform transition-transform duration-300`}>
             <div className={`p-6 border-b ${theme.border} flex justify-between items-center`}><h2 className={`text-2xl font-black uppercase tracking-tighter ${theme.text}`} style={{ fontFamily: "'Impact', sans-serif" }}>Cart ({cart.length})</h2><button onClick={() => setIsCartOpen(false)} className={`${theme.textMuted} hover:${theme.text}`}><X size={24} /></button></div>
-            <div className={`p-4 ${theme.card} border-b ${theme.border}`}><p className={`text-xs font-mono mb-2 ${theme.textMuted}`}>{progressToFreeShipping >= 100 ? "UNLOCKED: FREE PAN-INDIA SHIPPING" : `ADD ₹${freeShippingThreshold - cartTotal} MORE FOR FREE DELIVERY`}</p><div className={`w-full h-1 ${isLight ? 'bg-gray-300' : 'bg-gray-800'} rounded-full overflow-hidden`}><div className="h-full bg-[#8A2BE2] transition-all duration-500" style={{ width: `${progressToFreeShipping}%` }}></div></div></div>
+            <div className={`p-4 ${theme.card} border-b ${theme.border}`}><p className={`text-xs font-mono mb-2 ${theme.textMuted}`}>{progressToFreeShipping >= 100 ? "UNLOCKED: FREE PAN-INDIA SHIPPING" : `ADD ₹${freeShippingThreshold - cartTotal} MORE FOR FREE DELIVERY`}</p><div className={`w-full h-1 ${isLight ? 'bg-gray-300' : 'bg-gray-800'} rounded-full overflow-hidden`}><div className="h-full bg-[#C7CDD1] transition-all duration-500" style={{ width: `${progressToFreeShipping}%` }}></div></div></div>
             <div className="flex-1 overflow-y-auto p-6 space-y-6">
               {cart.map((item, index) => (
-                <div key={index} className="flex gap-4 group">
+                <div key={item.cartItemId || index} className="flex gap-4 group">
                   <div className={`w-20 h-24 border ${theme.border} overflow-hidden ${isLight ? 'bg-gray-200' : 'bg-gray-900'}`}><img src={item.image} className="w-full h-full object-cover grayscale" /></div>
-                  <div className="flex-1 flex flex-col justify-between py-1"><div><h4 className={`text-sm font-bold uppercase ${theme.text}`}>{item.name}</h4><p className={`font-mono text-[10px] mt-1 ${theme.textMuted}`}>SIZE: L // QTY: 1</p></div><div className="flex justify-between items-end"><span className={`font-mono font-bold ${theme.accent}`}>₹{item.price}</span><button onClick={() => removeFromCart(index)} className="text-gray-600 hover:text-red-500 text-xs font-bold uppercase underline">Remove</button></div></div>
+                  <div className="flex-1 flex flex-col justify-between py-1"><div><h4 className={`text-sm font-bold uppercase ${theme.text}`}>{item.name}</h4><p className={`font-mono text-[10px] mt-1 ${theme.textMuted}`}>SIZE: {item.selectedSize || 'N/A'} // QTY: 1</p></div><div className="flex justify-between items-end"><span className={`font-mono font-bold ${theme.accent}`}>₹{item.price}</span><button onClick={() => removeFromCart(index)} className="text-gray-600 hover:text-red-500 text-xs font-bold uppercase underline">Remove</button></div></div>
                 </div>
               ))}
               {cart.length === 0 && <p className={`text-center font-mono mt-10 ${theme.textMuted}`}>THE CART IS EMPTY.</p>}
