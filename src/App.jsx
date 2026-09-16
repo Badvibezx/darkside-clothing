@@ -14,9 +14,10 @@ import { initializeApp } from 'firebase/app';
 import { 
   getAuth, signInAnonymously, onAuthStateChanged, 
   signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut,
-  RecaptchaVerifier, signInWithPhoneNumber, updateProfile
+  RecaptchaVerifier, signInWithPhoneNumber, updateProfile, sendEmailVerification, sendPasswordResetEmail
 } from 'firebase/auth';
-import { getFirestore, doc, setDoc, getDoc, getDocs, collection, addDoc, query, where, onSnapshot, updateDoc } from 'firebase/firestore';
+import { getFirestore, doc, setDoc, getDoc, getDocs, collection, addDoc, query, where, onSnapshot, updateDoc, deleteDoc } from 'firebase/firestore';
+import { getStorage, ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage';
 
 // --- FIREBASE INITIALIZATION ---
 const userConfig = {
@@ -33,6 +34,7 @@ const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__f
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
+const storage = getStorage(app);
 
 // Sanitize appId to ensure legal Firestore path hierarchy
 const rawAppId = typeof __app_id !== 'undefined' ? __app_id : 'darkside-app';
@@ -48,24 +50,27 @@ const INITIAL_PRODUCTS = [
   { id: 6, name: "STEALTH TACTICAL VEST", price: 4599, category: "Outerwear", stock: 8, image: "https://images.unsplash.com/photo-1608231387042-66d1773070a5?auto=format&fit=crop&q=80&w=800", fitBlock: "oversized-jacket" },
 ];
 
-const callGeminiAPI = async (prompt, schema = null) => {
-  const delays = [1000, 2000, 4000, 8000, 16000];
+const GEMINI_API_KEY = (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_GEMINI_API_KEY) || '';
 
+const callGeminiAPI = async (prompt, schema = null) => {
+  if (!GEMINI_API_KEY) {
+    console.error("Gemini API key missing. Set VITE_GEMINI_API_KEY in production.");
+    throw new Error("AI stylist is not configured.");
+  }
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${GEMINI_API_KEY}`;
+  const payload = { 
+    contents: [{ parts: [{ text: prompt }] }], 
+    systemInstruction: { parts: [{ text: "You are a rogue, cyberpunk AI stylist for DARKSIDE CLOTHING INDIA. Speak with an edgy, dystopian tone." }] } 
+  };
+  if (schema) payload.generationConfig = { responseMimeType: "application/json", responseSchema: schema };
+
+  const delays = [1000, 2000, 4000, 8000, 16000];
   for (let i = 0; i < 5; i++) {
     try {
-      const response = await fetch('/api/gemini', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ prompt, schema })
-      });
-
-      if (!response.ok) {
-        const errData = await response.json();
-        throw new Error(errData.error || `HTTP status ${response.status}`);
-      }
-
+      const response = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+      if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
       const data = await response.json();
-      return data.text;
+      return data.candidates[0].content.parts[0].text;
     } catch (error) {
       if (i === 4) throw error;
       await new Promise(res => setTimeout(res, delays[i]));
@@ -98,25 +103,58 @@ const CustomCursor = () => {
   );
 };
 
-const CountdownTimer = () => {
-  const [timeLeft, setTimeLeft] = useState({ h: 24, m: 0, s: 0 });
+const DEFAULT_SETTINGS = {
+  heroHeadline: 'THE SYNDICATE COLLECTION',
+  heroSubline: 'Darkside — Embrace the light.',
+  heroNotice: 'GOING TO BE LIVE SOON',
+  timerEnabled: false,
+  timerEndsAt: '',
+  timerLabel: 'EXCLUSIVE DROP RELEASING IN',
+  marqueeText: '✦ DARKSIDE - EMBRACE THE LIGHT ✦ 100% HEAVYWEIGHT COTTON ✦ FREE SHIPPING PAN-INDIA ✦ CASH ON DELIVERY AVAILABLE ✦ NOT MADE FOR EVERYONE',
+  freeShippingThreshold: 5000,
+  shippingFee: 150,
+  codEnabled: true,
+  storeOpen: true,
+  storeClosedMessage: 'Restocking. Back shortly.'
+};
+
+const CountdownTimer = ({ endsAt, onExpire }) => {
+  const calc = () => {
+    const diff = new Date(endsAt).getTime() - Date.now();
+    if (isNaN(diff) || diff <= 0) return null;
+    return {
+      d: Math.floor(diff / 86400000),
+      h: Math.floor((diff % 86400000) / 3600000),
+      m: Math.floor((diff % 3600000) / 60000),
+      s: Math.floor((diff % 60000) / 1000)
+    };
+  };
+  const [timeLeft, setTimeLeft] = useState(calc);
+
   useEffect(() => {
+    setTimeLeft(calc());
     const timer = setInterval(() => {
-      setTimeLeft(prev => { 
-        let { h, m, s } = prev; 
-        if (s > 0) s--; 
-        else if (m > 0) { m--; s = 59; } 
-        else if (h > 0) { h--; m = 59; s = 59; } 
-        return { h, m, s }; 
-      });
+      const next = calc();
+      setTimeLeft(next);
+      if (!next) { clearInterval(timer); if (onExpire) onExpire(); }
     }, 1000);
     return () => clearInterval(timer);
-  }, []);
+  }, [endsAt]);
+
+  if (!timeLeft) return null;
+
+  const units = [
+    ...(timeLeft.d > 0 ? [{ label: 'DAYS', value: timeLeft.d }] : []),
+    { label: 'HRS', value: timeLeft.h },
+    { label: 'MIN', value: timeLeft.m },
+    { label: 'SEC', value: timeLeft.s }
+  ];
+
   return (
-    <div className="flex justify-center gap-4 mb-8 font-mono">
-      {[{ label: 'HRS', value: timeLeft.h }, { label: 'MIN', value: timeLeft.m }, { label: 'SEC', value: timeLeft.s }].map((t, i) => (
+    <div className="flex justify-center gap-3 md:gap-4 mb-8 font-mono">
+      {units.map((t, i) => (
         <div key={i} className="flex flex-col items-center">
-          <span className="text-4xl md:text-6xl text-white font-black bg-[#0A0A0A] border border-white/10 p-4 w-20 md:w-24 text-center">{String(t.value).padStart(2, '0')}</span>
+          <span className="text-3xl md:text-6xl text-white font-black bg-[#0A0A0A] border border-white/10 p-3 md:p-4 w-16 md:w-24 text-center">{String(t.value).padStart(2, '0')}</span>
           <span className="text-[10px] text-gray-500 mt-2">{t.label}</span>
         </div>
       ))}
@@ -149,7 +187,7 @@ const SizePredictor = ({ appState }) => {
     <div className="fixed inset-0 z-[70] bg-black/90 flex items-center justify-center p-4 backdrop-blur-sm">
       <div className={`${isLight ? 'bg-white border-black/20' : 'bg-[#0A0A0A] border-[#A6FF3D]/30'} border w-full max-w-md p-6 relative`}>
         <button onClick={() => setShowSizeAI(false)} className={`absolute top-4 right-4 ${theme.textMuted} hover:${theme.text}`}><X size={20} /></button>
-        <div className="flex items-center gap-2 mb-6"><Fingerprint className="text-[#C7CDD1]" /><h3 className={`text-xl font-bold uppercase tracking-wider ${theme.text}`} style={{ fontFamily: "'Impact', sans-serif" }}>AI Fit Predictor</h3></div>
+        <div className="flex items-center gap-2 mb-6"><Fingerprint className="text-[#C7CDD1]" /><h3 className={`text-xl font-bold uppercase tracking-wider ${theme.text}`} style={{ fontFamily: "'Anton', sans-serif" }}>AI Fit Predictor</h3></div>
         {result ? (
           <div className="space-y-4 font-mono text-sm animate-in fade-in zoom-in duration-500">
              <div className={`p-4 border ${isLight ? 'border-[#C7CDD1] bg-[#C7CDD1]/10 text-[#C7CDD1]' : 'border-[#A6FF3D] bg-[#A6FF3D]/10 text-[#A6FF3D]'}`}><p className="font-bold mb-2 uppercase">ANALYSIS COMPLETE:</p>{result.split('\n').map((line, i) => (<p key={i} className={i === 0 ? "text-2xl font-black mb-2" : `text-xs ${theme.textMuted}`}>{line}</p>))}</div>
@@ -198,7 +236,7 @@ const VibeMatcher = ({ appState }) => {
     <div className="fixed inset-0 z-[70] bg-black/90 flex items-center justify-center p-4 backdrop-blur-sm">
       <div className={`${isLight ? 'bg-white' : 'bg-[#0A0A0A]'} border border-[#C7CDD1]/50 w-full max-w-2xl p-6 relative`}>
         <button onClick={() => setShowVibeMatcher(false)} className={`absolute top-4 right-4 ${theme.textMuted} hover:${theme.text}`}><X size={20} /></button>
-        <div className="flex items-center gap-2 mb-2"><Sparkles className="text-[#C7CDD1]" /><h3 className={`text-2xl font-black uppercase tracking-wider ${theme.text}`} style={{ fontFamily: "'Impact', sans-serif" }}>AI Vibe Matcher</h3></div>
+        <div className="flex items-center gap-2 mb-2"><Sparkles className="text-[#C7CDD1]" /><h3 className={`text-2xl font-black uppercase tracking-wider ${theme.text}`} style={{ fontFamily: "'Anton', sans-serif" }}>AI Vibe Matcher</h3></div>
         <p className={`font-mono text-xs mb-6 ${theme.textMuted}`}>DESCRIBE YOUR DESTINATION. THE NEURAL NET WILL FORGE YOUR OUTFIT.</p>
         {!recommendations ? (
           <div className="space-y-4 font-mono">
@@ -217,7 +255,7 @@ const VibeMatcher = ({ appState }) => {
                  p ? <div key={p.id || idx} className={`border p-2 flex gap-3 ${theme.border} ${theme.card}`}><img src={p.image} className="w-16 h-20 object-cover grayscale" /><div className="flex flex-col justify-center"><p className={`font-bold text-xs uppercase ${theme.text}`}>{p.name}</p><p className={`font-mono text-xs mt-1 ${theme.accent}`}>₹{p.price}</p><button onClick={() => { setShowVibeMatcher(false); openProduct(p); }} className="text-left text-[#C7CDD1] text-[10px] font-mono uppercase mt-2 hover:underline">View & Select Size</button></div></div> : null
                ))}
              </div>
-             <button onClick={() => setRecommendations(null)} className={`w-full border font-bold py-3 uppercase font-mono text-sm transition-colors ${theme.border} ${theme.text} hover:bg-gray-200`}>Reset Vibe</button>
+             <button onClick={() => setRecommendations(null)} className={`w-full border font-bold py-3 uppercase font-mono text-sm transition-colors ${theme.border} ${theme.text} hover:bg-white/10`}>Reset Vibe</button>
           </div>
         )}
       </div>
@@ -235,7 +273,7 @@ const Navbar = ({ appState }) => {
           <Menu className={`md:hidden cursor-pointer ${isLight ? 'text-black hover:text-[#C7CDD1]' : 'text-white hover:text-[#A6FF3D]'}`} onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)} />
           <div onClick={() => handleNavigate('home')} className="cursor-pointer relative z-50 flex items-center group">
             <img src={darksideLogo} alt="Darkside" className="h-14 md:h-16 object-contain group-hover:scale-105 transition-transform" />
-            <h1 className={`hidden text-3xl font-black tracking-tighter cursor-pointer uppercase glitch-hover ${isLight ? 'text-black' : 'text-white'}`} style={{ fontFamily: "'Impact', sans-serif" }}>DARK<span className={isLight ? 'text-[#C7CDD1]' : 'text-[#A6FF3D]'}>SIDE</span></h1>
+            <h1 className={`hidden text-3xl font-black tracking-tighter cursor-pointer uppercase glitch-hover ${isLight ? 'text-black' : 'text-white'}`} style={{ fontFamily: "'Anton', sans-serif" }}>DARK<span className={isLight ? 'text-[#C7CDD1]' : 'text-[#A6FF3D]'}>SIDE</span></h1>
           </div>
         </div>
         <div className="hidden md:flex items-center space-x-8">
@@ -275,7 +313,7 @@ const Navbar = ({ appState }) => {
 
 const AuthView = ({ appState }) => {
   const { theme, isLight, handleNavigate } = appState;
-  const [authMode, setAuthMode] = useState('phone'); 
+  const [authMode, setAuthMode] = useState('email'); 
   const [phone, setPhone] = useState('');
   const [otpSent, setOtpSent] = useState(false);
   const [otp, setOtp] = useState('');
@@ -284,6 +322,8 @@ const AuthView = ({ appState }) => {
   const [isSignup, setIsSignup] = useState(false);
   const [error, setError] = useState(''); 
   const [loading, setLoading] = useState(false);
+  const [verificationNotice, setVerificationNotice] = useState(false);
+  const [resetSent, setResetSent] = useState(false);
 
   // Clean up Recaptcha instances safely on unmount
   useEffect(() => {
@@ -359,8 +399,14 @@ const AuthView = ({ appState }) => {
     e.preventDefault();
     setError(''); setLoading(true);
     try { 
-      const result = isSignup ? await createUserWithEmailAndPassword(auth, email, password) : await signInWithEmailAndPassword(auth, email, password); 
-      await navigateAfterAuth(result.user);
+      if (isSignup) {
+        const result = await createUserWithEmailAndPassword(auth, email, password);
+        try { await sendEmailVerification(result.user); setVerificationNotice(true); } catch (vErr) { console.warn("Verification email failed:", vErr); }
+        await navigateAfterAuth(result.user);
+      } else {
+        const result = await signInWithEmailAndPassword(auth, email, password);
+        await navigateAfterAuth(result.user);
+      }
     } catch (err) { 
       setError(err.message); 
     } finally { 
@@ -368,16 +414,38 @@ const AuthView = ({ appState }) => {
     } 
   };
 
+  const handleForgotPassword = async () => {
+    if (!email) { setError("Enter your email above first, then tap 'Forgot password?'"); return; }
+    setError(''); setLoading(true);
+    try {
+      await sendPasswordResetEmail(auth, email);
+      setResetSent(true);
+    } catch (err) {
+      setError(err.message);
+    } finally { setLoading(false); }
+  };
+
   return (
     <div className="pt-32 px-4 max-w-md mx-auto min-h-screen">
       <div className={`${theme.card} border ${theme.border} p-8 relative overflow-hidden`}>
-        <h2 className={`text-4xl font-black uppercase tracking-tighter mb-2 ${theme.text}`} style={{ fontFamily: "'Impact', sans-serif" }}>Join The Syndicate</h2>
+        <h2 className={`text-4xl font-black uppercase tracking-tighter mb-2 ${theme.text}`} style={{ fontFamily: "'Anton', sans-serif" }}>Join The Syndicate</h2>
         <p className={`font-mono text-xs mb-8 ${theme.textMuted}`}>AUTHENTICATE VIA SECURE TERMINAL.</p>
+        {verificationNotice && <p className="text-[#A6FF3D] font-mono text-xs mb-4 p-2 bg-[#A6FF3D]/10 border border-[#A6FF3D]/30 flex items-center gap-2"><Mail size={14}/> Verification email sent — check your inbox.</p>}
+        {resetSent && <p className="text-[#A6FF3D] font-mono text-xs mb-4 p-2 bg-[#A6FF3D]/10 border border-[#A6FF3D]/30 flex items-center gap-2"><Mail size={14}/> Password reset link sent — check your inbox.</p>}
         {error && <p className="text-red-500 font-mono text-xs mb-4 p-2 bg-red-500/10 border border-red-500/30 flex items-center gap-2"><AlertOctagon size={14}/> {error}</p>}
         <div id="recaptcha-container"></div>
+        {authMode === 'email' && (
+          <form onSubmit={handleEmailAuth} className="space-y-4 font-mono text-sm animate-in fade-in">
+            <div><label className={`block mb-1 font-bold ${theme.accent}`}>EMAIL IDENTIFIER</label><input type="email" value={email} onChange={e=>{setEmail(e.target.value); setResetSent(false);}} required className={`w-full p-3 outline-none ${theme.input}`} /></div>
+            <div><label className={`block mb-1 font-bold ${theme.accent}`}>PASSCODE</label><input type="password" value={password} onChange={e=>setPassword(e.target.value)} required minLength={6} className={`w-full p-3 outline-none ${theme.input}`} /></div>
+            {!isSignup && <button type="button" onClick={handleForgotPassword} className={`text-xs hover:underline ${theme.textMuted}`}>Forgot password?</button>}
+            <button disabled={loading} type="submit" className={`w-full font-black py-4 mt-2 uppercase tracking-widest disabled:opacity-50 flex justify-center items-center gap-2 ${theme.btnPrimary}`}>{loading ? <Loader2 className="animate-spin" size={18} /> : (isSignup ? "Create Identity" : "Initialize Login")}</button>
+            <div className="flex justify-between items-center mt-4"><button type="button" onClick={() => setIsSignup(!isSignup)} className={`text-xs hover:underline ${theme.textMuted}`}>{isSignup ? "Have an account?" : "Need an account?"}</button><button type="button" onClick={() => setAuthMode('phone')} className={`text-xs hover:underline ${theme.textMuted} flex items-center gap-1`}><Smartphone size={12}/> Use Phone Instead</button></div>
+          </form>
+        )}
         {authMode === 'phone' && (
           !otpSent ? (
-            <form onSubmit={handleSendOTP} className="space-y-4 font-mono text-sm">
+            <form onSubmit={handleSendOTP} className="space-y-4 font-mono text-sm animate-in fade-in">
               <div><label className={`block mb-1 font-bold ${theme.accent}`}>PHONE NUMBER (10 DIGITS)</label><div className="flex items-center"><span className={`p-3 border border-r-0 ${isLight ? 'bg-gray-200 border-black/20 text-gray-500' : 'bg-gray-900 border-white/20 text-gray-500'}`}>+91</span><input type="text" value={phone} onChange={handlePhoneChange} placeholder="9999999999" required className={`w-full p-3 outline-none ${theme.input}`} /></div></div>
               <button disabled={loading || phone.length !== 10} type="submit" className={`w-full font-black py-4 mt-4 uppercase tracking-widest disabled:opacity-50 flex justify-center items-center gap-2 ${theme.btnPrimary}`}>{loading ? <Loader2 className="animate-spin" size={18} /> : <Smartphone size={18} />} GET OTP</button>
               <button type="button" onClick={() => setAuthMode('email')} className={`w-full text-center text-xs mt-4 hover:underline ${theme.textMuted} flex justify-center items-center gap-1`}><Mail size={12}/> Switch to Email Login</button>
@@ -391,35 +459,36 @@ const AuthView = ({ appState }) => {
             </form>
           )
         )}
-        {authMode === 'email' && (
-          <form onSubmit={handleEmailAuth} className="space-y-4 font-mono text-sm animate-in fade-in">
-            <div><label className={`block mb-1 font-bold ${theme.accent}`}>EMAIL IDENTIFIER</label><input type="email" value={email} onChange={e=>setEmail(e.target.value)} required className={`w-full p-3 outline-none ${theme.input}`} /></div>
-            <div><label className={`block mb-1 font-bold ${theme.accent}`}>PASSCODE</label><input type="password" value={password} onChange={e=>setPassword(e.target.value)} required className={`w-full p-3 outline-none ${theme.input}`} /></div>
-            <button disabled={loading} type="submit" className={`w-full font-black py-4 mt-4 uppercase tracking-widest disabled:opacity-50 flex justify-center items-center gap-2 ${theme.btnPrimary}`}>{loading ? <Loader2 className="animate-spin" size={18} /> : (isSignup ? "Create Identity" : "Initialize Login")}</button>
-            <div className="flex justify-between items-center mt-4"><button type="button" onClick={() => setIsSignup(!isSignup)} className={`text-xs hover:underline ${theme.textMuted}`}>{isSignup ? "Have an account?" : "Need an account?"}</button><button type="button" onClick={() => setAuthMode('phone')} className={`text-xs hover:underline ${theme.textMuted} flex items-center gap-1`}><Smartphone size={12}/> Use Phone</button></div>
-          </form>
-        )}
       </div>
     </div>
   );
 };
 
 const ProfileSetup = ({ appState }) => {
-  const { handleNavigate, setUser } = appState;
+  const { handleNavigate, setUser, theme } = appState;
   const [name, setName] = useState('');
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
 
   const handleSaveProfile = async (e) => {
     e.preventDefault();
     if (!name.trim()) return;
+    if (!auth.currentUser) { setError("Session expired. Please log in again."); return; }
     setLoading(true);
+    setError('');
     try {
       await updateProfile(auth.currentUser, { displayName: name });
-      setUser({ ...auth.currentUser, displayName: name });
+      setUser(prev => ({
+        uid: auth.currentUser.uid,
+        email: auth.currentUser.email,
+        phoneNumber: auth.currentUser.phoneNumber,
+        isAnonymous: auth.currentUser.isAnonymous,
+        displayName: name
+      }));
       handleNavigate('account');
     } catch (err) { 
       console.error(err); 
-      alert("Failed to update profile."); 
+      setError(err.message || "Failed to update profile. Please try again.");
     } finally { 
       setLoading(false); 
     }
@@ -428,8 +497,9 @@ const ProfileSetup = ({ appState }) => {
   return (
     <div className="min-h-screen bg-[#050505] text-[#E5E5E5] flex items-center justify-center p-4">
       <div className="w-full max-w-lg bg-[#0A0A0A] border border-[#333] p-8">
-        <h2 className="text-3xl font-black uppercase tracking-tighter mb-2 text-white" style={{ fontFamily: "'Impact', sans-serif" }}>Identify Yourself</h2>
+        <h2 className="text-3xl font-black uppercase tracking-tighter mb-2 text-white" style={{ fontFamily: "'Anton', sans-serif" }}>Identify Yourself</h2>
         <p className="font-mono text-xs mb-8 text-gray-400">WHAT SHOULD WE CALL YOU?</p>
+        {error && <p className="text-red-500 font-mono text-xs mb-4 p-2 bg-red-500/10 border border-red-500/30">{error}</p>}
         <form onSubmit={handleSaveProfile} className="space-y-6 font-mono text-sm">
           <div><label className="block mb-2 font-bold text-[#A6FF3D]">NAME *</label><input type="text" required value={name} onChange={e=>setName(e.target.value)} placeholder="Enter your name..." className="w-full p-4 bg-black border border-[#333] text-white focus:border-[#A6FF3D] outline-none" /></div>
           <button disabled={loading || !name.trim()} type="submit" className="w-full bg-[#A6FF3D] text-black font-black py-4 uppercase tracking-widest disabled:opacity-50 hover:bg-white transition-colors">{loading ? <Loader2 className="animate-spin mx-auto" size={20} /> : "Continue"}</button>
@@ -441,7 +511,7 @@ const ProfileSetup = ({ appState }) => {
 };
 
 const Account = ({ appState }) => {
-  const { theme, isLight, user, setUser, handleNavigate } = appState;
+  const { theme, isLight, user, setUser, handleNavigate, wishlist } = appState;
   const [activeTab, setActiveTab] = useState('menu');
   const [myOrders, setMyOrders] = useState([]);
   const [addrForm, setAddrForm] = useState({ address: '', city: '', state: '', pin: '' });
@@ -453,7 +523,7 @@ const Account = ({ appState }) => {
 
   useEffect(() => {
     let unsubOrders;
-    if (user && activeTab === 'orders') {
+    if (user && !user.isAnonymous) {
       unsubOrders = onSnapshot(query(collection(db, 'artifacts', appId, 'public', 'data', 'orders'), where('userId', '==', user.uid)), (snap) => {
          const userOrders = snap.docs.map(doc => ({ id: doc.id, ...doc.data() })).sort((a,b) => new Date(b.createdAt) - new Date(a.createdAt));
          setMyOrders(userOrders);
@@ -492,14 +562,15 @@ const Account = ({ appState }) => {
   const handleUpdateProfile = async (e) => {
     e.preventDefault();
     if (!updateName) return;
+    if (!auth.currentUser) { alert("Session expired. Please log in again."); return; }
     try {
       await updateProfile(auth.currentUser, { displayName: updateName });
-      setUser({ ...auth.currentUser, displayName: updateName });
+      setUser(prev => ({ ...prev, displayName: updateName }));
       await setDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'userdata', 'state'), { heightCm: heightCm || null, weightKg: weightKg || null }, { merge: true });
       alert("Profile Update Complete."); 
       setActiveTab('menu');
     } catch(err) { 
-      alert("Update Failed."); 
+      alert("Update Failed: " + (err.message || "unknown error")); 
     }
   };
 
@@ -522,9 +593,10 @@ const Account = ({ appState }) => {
   if (activeTab === 'menu') {
     return (
       <div className="pt-24 px-4 max-w-4xl mx-auto min-h-screen pb-20 font-mono">
-        <h2 className={`text-4xl font-black uppercase tracking-tighter mb-8 ${theme.text}`} style={{ fontFamily: "'Impact', sans-serif" }}>Account</h2>
+        <h2 className={`text-4xl font-black uppercase tracking-tighter mb-8 ${theme.text}`} style={{ fontFamily: "'Anton', sans-serif" }}>Account</h2>
         
-        <div className={`${theme.card} border ${theme.border} p-6 flex items-center gap-6 mb-8`}>
+        <div className={`${theme.card} border ${theme.border} p-6 flex items-center gap-6 mb-8 relative overflow-hidden`}>
+          <div className="absolute top-0 left-0 w-full h-[2px] bg-[#A6FF3D]/40 shadow-[0_0_15px_#A6FF3D] animate-scan-line pointer-events-none z-10"></div>
           <div className={`w-20 h-20 md:w-24 md:h-24 rounded-full flex items-center justify-center font-black text-3xl md:text-4xl ${isLight ? 'bg-black text-white' : 'bg-[#A6FF3D] text-black'}`}>
             {user?.displayName ? user.displayName.charAt(0).toUpperCase() : (user?.email ? user.email.charAt(0).toUpperCase() : 'A')}
           </div>
@@ -537,27 +609,52 @@ const Account = ({ appState }) => {
           </div>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          <button onClick={() => setActiveTab('orders')} className={`${theme.card} border ${theme.border} p-6 text-left hover:border-[#C7CDD1] transition-colors group flex flex-col justify-between h-32`}>
-             <div className="flex items-center gap-3 mb-2"><Package className={theme.text} size={24} /> <span className={`font-bold uppercase ${theme.text}`}>Orders</span></div>
-             <p className={`text-xs ${theme.textMuted} group-hover:${theme.text}`}>Check your transmission history and fulfillment status.</p>
-          </button>
-          
-          <button onClick={() => setActiveTab('addresses')} className={`${theme.card} border ${theme.border} p-6 text-left hover:border-[#C7CDD1] transition-colors group flex flex-col justify-between h-32`}>
-             <div className="flex items-center gap-3 mb-2"><MapPin className={theme.text} size={24} /> <span className={`font-bold uppercase ${theme.text}`}>Addresses</span></div>
-             <p className={`text-xs ${theme.textMuted} group-hover:${theme.text}`}>Save drop coordinates for seamless rapid checkout.</p>
-          </button>
-          
-          <button onClick={() => setActiveTab('settings')} className={`${theme.card} border ${theme.border} p-6 text-left hover:border-[#C7CDD1] transition-colors group flex flex-col justify-between h-32`}>
-             <div className="flex items-center gap-3 mb-2"><SettingsIcon className={theme.text} size={24} /> <span className={`font-bold uppercase ${theme.text}`}>Profile Details</span></div>
-             <p className={`text-xs ${theme.textMuted} group-hover:${theme.text}`}>Modify your identity, operative name, and sizing.</p>
-          </button>
+        {user?.email && user?.emailVerified === false && (
+          <div className="mb-6 p-4 border border-[#D4B876]/40 bg-[#D4B876]/10 flex flex-col md:flex-row md:items-center justify-between gap-3">
+            <p className="text-xs text-[#D4B876] flex items-center gap-2"><AlertTriangle size={14} className="shrink-0" /> Your email isn't verified yet.</p>
+            <button onClick={async () => {
+                try { await sendEmailVerification(auth.currentUser); alert("Verification email sent."); }
+                catch (e) { alert("Couldn't send right now. Try again in a minute."); }
+              }} className="text-[10px] font-bold uppercase tracking-widest underline text-[#D4B876] hover:text-white text-left md:text-right">
+              Resend verification email
+            </button>
+          </div>
+        )}
 
-          <button onClick={handleLogout} className={`${theme.card} border ${theme.border} p-6 text-left hover:border-red-500 hover:bg-red-500/5 transition-colors group flex flex-col justify-between h-32 md:col-span-2 lg:col-span-3`}>
-             <div className="flex items-center gap-3 mb-2 text-red-500"><LogOutIcon size={24} /> <span className="font-bold uppercase">Logout</span></div>
-             <p className="text-xs text-red-500/70 group-hover:text-red-500">Disconnect from the terminal.</p>
-          </button>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {[
+            { id: 'orders', icon: Package, label: 'My Orders',
+              value: myOrders.length === 0 ? 'No orders yet' : `${myOrders.length} order${myOrders.length > 1 ? 's' : ''}`,
+              sub: myOrders.length > 0 ? `Latest: ${myOrders[0].status}` : 'Track and review past drops' },
+            { id: 'addresses', icon: MapPin, label: 'Saved Address',
+              value: savedAddr ? `${savedAddr.city}, ${savedAddr.state}` : 'None saved',
+              sub: savedAddr ? `PIN ${savedAddr.pin}` : 'Add one for faster checkout' },
+            { id: 'settings', icon: SettingsIcon, label: 'Profile Details',
+              value: user?.displayName || 'Unnamed',
+              sub: heightCm && weightKg ? `${heightCm}cm · ${weightKg}kg` : 'Add height & weight for size help' },
+            { id: 'vault', icon: Heart, label: 'The Vault',
+              value: wishlist.length === 0 ? 'Empty' : `${wishlist.length} saved`,
+              sub: 'Pieces you bookmarked' },
+          ].map(tile => (
+            <button key={tile.id}
+              onClick={() => tile.id === 'vault' ? handleNavigate('vault') : setActiveTab(tile.id)}
+              className={`${theme.card} border ${theme.border} p-5 text-left hover:border-[#A6FF3D] hover:shadow-[0_0_20px_rgba(166,255,61,0.08)] transition-all group flex items-center justify-between gap-4`}>
+              <div className="flex items-start gap-4 min-w-0">
+                <tile.icon className="text-[#A6FF3D] shrink-0 mt-0.5" size={20} />
+                <div className="min-w-0">
+                  <p className={`text-[10px] uppercase tracking-widest mb-1 ${theme.textMuted}`}>{tile.label}</p>
+                  <p className={`font-bold truncate ${theme.text}`}>{tile.value}</p>
+                  <p className={`text-[11px] mt-1 truncate ${theme.textMuted}`}>{tile.sub}</p>
+                </div>
+              </div>
+              <ChevronRight size={16} className={`shrink-0 ${theme.textMuted} group-hover:text-[#A6FF3D] group-hover:translate-x-1 transition-all`} />
+            </button>
+          ))}
         </div>
+
+        <button onClick={handleLogout} className={`w-full mt-4 border ${theme.border} p-4 text-center text-red-500 text-xs font-bold uppercase tracking-widest hover:border-red-500 hover:bg-red-500/5 transition-colors flex items-center justify-center gap-2`}>
+          <LogOutIcon size={14} /> Log Out
+        </button>
       </div>
     );
   }
@@ -571,7 +668,7 @@ const Account = ({ appState }) => {
       <div className={`${theme.card} border ${theme.border} p-6 md:p-10 min-h-[500px]`}>
         {activeTab === 'orders' && (
           <div className="animate-in fade-in">
-             <h3 className={`font-black text-2xl uppercase tracking-tighter mb-8 border-b ${theme.border} pb-4 ${theme.text}`} style={{ fontFamily: "'Impact', sans-serif" }}>Transmissions & Orders</h3>
+             <h3 className={`font-black text-2xl uppercase tracking-tighter mb-8 border-b ${theme.border} pb-4 ${theme.text}`} style={{ fontFamily: "'Anton', sans-serif" }}>Transmissions & Orders</h3>
              {myOrders.length === 0 ? (
                 <div className="text-center py-20"><p className={`text-sm ${theme.textMuted}`}>NO TRANSMISSION HISTORY DETECTED.</p><button onClick={() => handleNavigate('shop')} className={`mt-6 font-bold px-8 py-3 uppercase tracking-widest transition-colors ${theme.btnPrimary}`}>Enter Shop</button></div>
              ) : (
@@ -616,7 +713,7 @@ const Account = ({ appState }) => {
         
         {activeTab === 'addresses' && (
           <div className="animate-in fade-in max-w-xl mx-auto">
-             <h3 className={`font-black text-2xl uppercase tracking-tighter mb-8 border-b ${theme.border} pb-4 ${theme.text}`} style={{ fontFamily: "'Impact', sans-serif" }}>Default Coordinates</h3>
+             <h3 className={`font-black text-2xl uppercase tracking-tighter mb-8 border-b ${theme.border} pb-4 ${theme.text}`} style={{ fontFamily: "'Anton', sans-serif" }}>Default Coordinates</h3>
              {savedAddr && (
                 <div className={`p-5 mb-8 border-l-4 border-[#C7CDD1] bg-[#C7CDD1]/10 text-sm ${theme.text}`}>
                    <p className="font-bold text-[#C7CDD1] mb-2 uppercase flex items-center gap-2"><CheckCircle size={16}/> Active Coordinates</p>
@@ -635,7 +732,7 @@ const Account = ({ appState }) => {
         
         {activeTab === 'settings' && (
           <div className="animate-in fade-in max-w-xl mx-auto">
-             <h3 className={`font-black text-2xl uppercase tracking-tighter mb-8 border-b ${theme.border} pb-4 ${theme.text}`} style={{ fontFamily: "'Impact', sans-serif" }}>Profile Details</h3>
+             <h3 className={`font-black text-2xl uppercase tracking-tighter mb-8 border-b ${theme.border} pb-4 ${theme.text}`} style={{ fontFamily: "'Anton', sans-serif" }}>Profile Details</h3>
              <form onSubmit={handleUpdateProfile} className="space-y-6 text-sm">
                 <div><label className={`block mb-2 font-bold ${theme.accent}`}>NAME</label><input required value={updateName} onChange={e=>setUpdateName(e.target.value)} className={`w-full p-4 outline-none ${theme.input}`} /></div>
                 {(user?.phoneNumber || user?.email) && (
@@ -661,13 +758,17 @@ const Account = ({ appState }) => {
 };
 
 const CheckoutView = ({ appState }) => {
-  const { theme, isLight, user, cart, cartTotal, freeShippingThreshold, setCart, saveUserData, wishlist, handleNavigate } = appState;
+  const { theme, isLight, user, cart, cartTotal, freeShippingThreshold, shippingFee, setCart, saveUserData, wishlist, handleNavigate, settings } = appState;
   const [formData, setFormData] = useState({ name: '', address: '', city: '', state: '', pin: '', phone: '' });
   const [paymentMode, setPaymentMode] = useState('UPI');
   const [processing, setProcessing] = useState(false);
   const [showSuccessModal, setShowSuccessModal] = useState(false);
   const [fetchingCity, setFetchingCity] = useState(false);
   const [fieldErrors, setFieldErrors] = useState({});
+  const [orderError, setOrderError] = useState('');
+  const [promoInput, setPromoInput] = useState('');
+  const [appliedPromo, setAppliedPromo] = useState('');
+  const [confirmedTotal, setConfirmedTotal] = useState(null);
 
   useEffect(() => {
     if (user) {
@@ -677,8 +778,9 @@ const CheckoutView = ({ appState }) => {
          phone: user.phoneNumber ? user.phoneNumber.replace('+91', '') : '' 
        }));
        getDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'userdata', 'state')).then(docSnap => {
-          if (docSnap.exists() && docSnap.data().savedAddress) { 
-            setFormData(prev => ({ ...prev, ...docSnap.data().savedAddress })); 
+          if (docSnap.exists()) {
+            const data = docSnap.data();
+            setFormData(prev => ({ ...prev, ...(data.savedAddress || {}), phone: prev.phone || data.phone || '' }));
           }
        }).catch(e => console.error(e));
     }
@@ -711,39 +813,55 @@ const CheckoutView = ({ appState }) => {
     }
   };
 
-  const orderTotal = cartTotal > freeShippingThreshold ? cartTotal : cartTotal + 150;
+  const orderTotal = cartTotal > freeShippingThreshold ? cartTotal : cartTotal + shippingFee;
 
   const handlePlaceOrder = async (e) => { 
     e.preventDefault(); 
-    if (!user) { alert("AUTHENTICATION REQUIRED."); return; }
+    if (!user || user.isAnonymous) { setOrderError("Please sign in before placing an order."); return; }
+    if (user.email && user.emailVerified === false) { setOrderError("Please verify your email before placing an order — check your inbox, or resend from your Account page."); return; }
+    if (settings.storeOpen === false) { setOrderError(settings.storeClosedMessage || "The store is closed right now."); return; }
     const errors = {};
     if (formData.phone.length !== 10) errors.phone = "Phone must be exactly 10 digits.";
     if (formData.pin.length !== 6) errors.pin = "Pincode must be exactly 6 digits.";
     if (!formData.name.trim()) errors.name = "Name is required.";
     if (!formData.address.trim()) errors.address = "Address is required.";
     if (Object.keys(errors).length > 0) { setFieldErrors(errors); return; }
-    setFieldErrors({});
+    setFieldErrors({}); setOrderError('');
     setProcessing(true); 
     try {
-      const displayUser = user.displayName || (user.email ? user.email.replace('@cyber.net', '') : 'Guest');
-      const orderData = { 
-        userId: user.uid, 
-        userEmail: displayUser, 
-        items: cart, 
-        total: orderTotal, 
-        shippingInfo: formData, 
-        paymentMode: paymentMode, 
-        status: 'PENDING', 
-        createdAt: new Date().toISOString() 
-      };
-      await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'orders'), orderData);
+      // The server recalculates price, discount and shipping from the database.
+      // Nothing the browser sends about money is trusted.
+      const token = await auth.currentUser.getIdToken();
+      const res = await fetch('/api/place-order', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({
+          items: cart.map(i => ({ id: i.id, selectedSize: i.selectedSize, name: i.name })),
+          shippingInfo: formData,
+          paymentMode,
+          promoCode: appliedPromo || null
+        })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Could not place the order.");
+
+      setConfirmedTotal(data.total);
+
+      // Remember this address + phone for next time - no separate manual save needed.
+      try {
+        await setDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'userdata', 'state'), {
+          savedAddress: { address: formData.address, city: formData.city, state: formData.state, pin: formData.pin },
+          phone: formData.phone
+        }, { merge: true });
+      } catch (saveErr) { console.warn("Couldn't save address for next time:", saveErr); }
+
       setCart([]); 
       saveUserData([], wishlist); 
       setProcessing(false); 
       setShowSuccessModal(true); 
     } catch (err) { 
-      console.error("Order sync failed", err); 
-      alert("TRANSMISSION FAILED. PLEASE TRY AGAIN."); 
+      console.error("Order failed", err); 
+      setOrderError(err.message || "Something went wrong. Please try again.");
       setProcessing(false); 
     }
   };
@@ -753,8 +871,9 @@ const CheckoutView = ({ appState }) => {
       <div className="fixed inset-0 z-[999] bg-black flex items-center justify-center p-4">
         <div className="bg-[#0A0A0A] border border-[#A6FF3D]/40 shadow-[0_0_40px_rgba(166,255,61,0.1)] w-full max-w-lg p-8 relative flex flex-col items-center text-center animate-in">
           <div className="w-20 h-20 rounded-full bg-[#A6FF3D]/10 flex items-center justify-center mb-6"><CheckCircle size={40} className="text-[#A6FF3D]" /></div>
-          <h2 className="text-3xl font-black text-white uppercase tracking-tighter mb-2" style={{ fontFamily: "'Impact', sans-serif" }}>Order Secured</h2>
-          <p className="font-mono text-sm text-[#A6FF3D] mb-6 tracking-widest">TRANSMISSION SUCCESSFUL</p>
+          <h2 className="text-3xl font-black text-white uppercase tracking-tighter mb-2" style={{ fontFamily: "'Anton', sans-serif" }}>Order Secured</h2>
+          <p className="font-mono text-sm text-[#A6FF3D] mb-2 tracking-widest">TRANSMISSION SUCCESSFUL</p>
+          {confirmedTotal !== null && <p className="font-mono text-xs text-gray-400 mb-6">Charged: <span className="text-white font-bold">₹{confirmedTotal}</span></p>}
           <div className="bg-[#D4B876]/10 border border-[#D4B876]/30 p-5 mb-8 text-left"><h3 className="text-[#D4B876] font-bold uppercase text-sm mb-2 flex items-center gap-2"><Lock size={16}/> Mandatory Protocol</h3><p className="font-mono text-xs text-gray-300 leading-relaxed">To protect transit security, you <span className="text-white font-bold underline">MUST</span> record a continuous unboxing video when your drop arrives. <br/><br/>Claims for damaged or missing pieces require unedited raw video evidence.</p></div>
           <button onClick={() => { setShowSuccessModal(false); handleNavigate('account'); }} className="w-full bg-white text-black font-black py-4 uppercase tracking-widest hover:bg-[#A6FF3D] transition-colors">I Acknowledge & Understand</button>
         </div>
@@ -763,13 +882,13 @@ const CheckoutView = ({ appState }) => {
   }
 
   if (cart.length === 0) return (
-    <div className="pt-32 px-4 max-w-4xl mx-auto min-h-screen text-center animate-in"><h2 className={`text-4xl font-black uppercase tracking-tighter mb-4 ${theme.text}`} style={{ fontFamily: "'Impact', sans-serif" }}>Secure Checkout</h2><p className={`font-mono text-sm mb-6 ${theme.textMuted}`}>YOUR CART IS EMPTY.</p><button onClick={() => handleNavigate('shop')} className={`font-bold px-8 py-3 uppercase tracking-widest transition-colors ${theme.btnPrimary}`}>Back to Catalog</button></div>
+    <div className="pt-32 px-4 max-w-4xl mx-auto min-h-screen text-center animate-in"><h2 className={`text-4xl font-black uppercase tracking-tighter mb-4 ${theme.text}`} style={{ fontFamily: "'Anton', sans-serif" }}>Secure Checkout</h2><p className={`font-mono text-sm mb-6 ${theme.textMuted}`}>YOUR CART IS EMPTY.</p><button onClick={() => handleNavigate('shop')} className={`font-bold px-8 py-3 uppercase tracking-widest transition-colors ${theme.btnPrimary}`}>Back to Catalog</button></div>
   );
 
   return (
     <div className="pt-24 px-4 max-w-7xl mx-auto min-h-screen pb-20">
       <div className="flex items-center justify-between mb-8 opacity-0 animate-reveal-1">
-        <h2 className={`text-4xl font-black uppercase tracking-tighter ${theme.text}`} style={{ fontFamily: "'Impact', sans-serif" }}>Secure Checkout</h2>
+        <h2 className={`text-4xl font-black uppercase tracking-tighter ${theme.text}`} style={{ fontFamily: "'Anton', sans-serif" }}>Secure Checkout</h2>
         <button onClick={() => handleNavigate('shop')} className={`hidden md:flex items-center gap-2 font-mono text-xs uppercase tracking-widest ${theme.textMuted} hover:${theme.text} transition-colors`}><ArrowLeft size={14} /> Edit Cart</button>
       </div>
       <div className="flex items-center gap-3 mb-10 font-mono text-xs uppercase tracking-widest opacity-0 animate-reveal-1">
@@ -790,7 +909,7 @@ const CheckoutView = ({ appState }) => {
            </div>
            <div className={`border-t ${theme.border} pt-4 space-y-2 font-mono text-sm`}>
              <div className={`flex justify-between ${theme.textMuted}`}><span>SUBTOTAL</span><span>₹{cartTotal}</span></div>
-             <div className={`flex justify-between ${theme.textMuted}`}><span>SHIPPING</span><span>{cartTotal > freeShippingThreshold ? 'FREE' : '₹150'}</span></div>
+             <div className={`flex justify-between ${theme.textMuted}`}><span>SHIPPING</span><span>{cartTotal > freeShippingThreshold ? 'FREE' : `₹${shippingFee}`}</span></div>
              <div className={`flex justify-between font-bold text-lg pt-4 border-t ${theme.border} mt-2 ${theme.text}`}><span>TOTAL</span><span className={theme.accent}>₹{orderTotal}</span></div>
            </div>
         </div>
@@ -809,13 +928,22 @@ const CheckoutView = ({ appState }) => {
             </div>
           </div>
           <div className={`${theme.card} border ${theme.border} p-6 opacity-0 animate-reveal-3`}>
-            <h3 className={`font-mono font-bold uppercase mb-4 border-b ${theme.border} pb-2 ${theme.accent}`}>2. Payment Protocol</h3>
+            <h3 className={`font-mono font-bold uppercase mb-4 border-b ${theme.border} pb-2 ${theme.accent}`}>2. Discount Code</h3>
+            <div className="flex gap-2 font-mono text-sm">
+              <input value={promoInput} onChange={e => setPromoInput(e.target.value.toUpperCase())} placeholder="ENTER CODE (OPTIONAL)" className={`flex-1 p-3 outline-none ${theme.input}`} />
+              <button type="button" onClick={() => setAppliedPromo(promoInput.trim())} className={`px-6 font-bold uppercase text-xs ${theme.btnPrimary}`}>Apply</button>
+            </div>
+            {appliedPromo && <p className="text-[#A6FF3D] text-[10px] font-mono mt-3 uppercase flex items-center gap-2"><CheckCircle size={12}/> {appliedPromo} will be checked when you place the order.</p>}
+          </div>
+          <div className={`${theme.card} border ${theme.border} p-6 opacity-0 animate-reveal-3`}>
+            <h3 className={`font-mono font-bold uppercase mb-4 border-b ${theme.border} pb-2 ${theme.accent}`}>3. Payment Protocol</h3>
             <div className="space-y-3 font-mono text-sm">
-              {['UPI', 'CREDIT/DEBIT CARD', 'CASH ON DELIVERY'].map(mode => (
+              {['UPI', 'CREDIT/DEBIT CARD', ...(settings.codEnabled !== false ? ['CASH ON DELIVERY'] : [])].map(mode => (
                 <label key={mode} className={`flex items-center gap-3 p-4 border cursor-pointer transition-all ${paymentMode === mode ? `border-[#A6FF3D] bg-[#A6FF3D]/10 shadow-[0_0_15px_rgba(166,255,61,0.1)]` : `${theme.border} hover:border-gray-500`}`}><input type="radio" name="payment" value={mode} checked={paymentMode === mode} onChange={(e) => setPaymentMode(e.target.value)} className="accent-[#A6FF3D]" /><span className={`uppercase font-bold ${theme.text}`}>{mode}</span></label>
               ))}
             </div>
           </div>
+          {orderError && <p className="text-red-500 font-mono text-xs p-4 bg-red-500/10 border border-red-500/30 flex items-center gap-2"><AlertOctagon size={14} className="shrink-0"/> {orderError}</p>}
           <button disabled={processing} type="submit" className={`w-full font-black py-5 uppercase tracking-widest text-lg disabled:opacity-50 flex justify-center items-center transition-all relative overflow-hidden group opacity-0 animate-reveal-4 ${theme.btnPrimary} hover:shadow-[0_0_25px_rgba(166,255,61,0.35)]`}>
             <div className="absolute inset-0 bg-white/20 translate-y-full group-hover:translate-y-0 transition-transform duration-300 ease-in-out z-0"></div>
             <span className="relative z-10">{processing ? <Loader2 className="animate-spin" size={24} /> : `PLACE ORDER • ₹${orderTotal}`}</span>
@@ -861,7 +989,7 @@ const HelpCenter = ({ appState }) => {
 
   return (
     <div className="pt-24 px-4 max-w-4xl mx-auto min-h-screen pb-20">
-      <h2 className={`text-4xl md:text-5xl font-black uppercase tracking-tighter mb-2 ${theme.text}`} style={{ fontFamily: "'Impact', sans-serif" }}>Help & Transmissions</h2>
+      <h2 className={`text-4xl md:text-5xl font-black uppercase tracking-tighter mb-2 ${theme.text}`} style={{ fontFamily: "'Anton', sans-serif" }}>Help & Transmissions</h2>
       <p className={`font-mono text-sm mb-12 ${theme.textMuted}`}>KNOWLEDGE BASE AND DIRECT COMM PROTOCOLS.</p>
       <div className="grid md:grid-cols-2 gap-12 items-start">
         <div>
@@ -876,6 +1004,46 @@ const HelpCenter = ({ appState }) => {
             <form onSubmit={handleSubmitTicket} className="space-y-4 font-mono text-sm"><p className={`text-xs ${theme.textMuted} mb-4`}>Submit a direct request to the admin terminal. Replies will be routed to your account.</p><textarea required value={ticketMsg} onChange={e=>setTicketMsg(e.target.value)} placeholder="Describe your issue or inquiry..." className={`w-full p-4 outline-none h-32 resize-none ${theme.input}`}></textarea><button type="submit" className={`w-full font-black py-4 uppercase tracking-widest transition-colors ${theme.btnPrimary}`}>Transmit Message</button></form>
           )}
         </div>
+      </div>
+    </div>
+  );
+};
+
+const TermsPage = ({ appState }) => {
+  const { theme } = appState;
+  const sections = [
+    { title: "1. Who You're Buying From", body: "Darkside Clothing is operated as an independent, India-based apparel brand. [Add your registered business name and address here once finalized — required for consumer protection compliance in India]. For any queries, use the Help & Transmissions page or the contact details in Section 15." },
+    { title: "2. Eligibility", body: "You must be at least 18 years old, or place orders with the involvement of a parent or guardian, to transact on this site. By placing an order, you confirm the information you provide is accurate and that you have the legal capacity to enter into this agreement." },
+    { title: "3. Acceptance of Terms", body: "By accessing or placing an order on Darkside Clothing, you agree to be bound by these Terms & Conditions. If you do not agree, please refrain from using this site." },
+    { title: "4. Products, Pricing & Errors", body: "All prices are listed in INR and may change without prior notice. Occasionally a product may be mispriced or its description may contain an error despite our best efforts. If this happens, we reserve the right to cancel the affected order and issue a full refund, even after payment has been confirmed. We may also limit the quantity of any item a single customer or address can order." },
+    { title: "5. Order Acceptance & Cancellation", body: "Placing an order is an offer to buy, not a guaranteed sale. We reserve the right to refuse or cancel any order at our discretion — for example due to stock errors, suspected fraud, or a pricing mistake — before it ships. If we cancel your order, any payment collected will be refunded in full." },
+    { title: "6. Sizing & Fit", body: "Sizing guidance (including AI-assisted predictions and verified-buyer fit data) is provided to help you choose, but exact fit can vary by individual. We are not liable for minor fit variations within normal manufacturing tolerances." },
+    { title: "7. Shipping", body: "We aim to dispatch orders within the timeframes stated on the site (typically 48-72 hours pan-India), but delays may occur due to logistics partners, weather, or circumstances beyond our control." },
+    { title: "8. Returns, Exchange & Unboxing Requirement", body: "Returns and exchanges are accepted within 7 days of delivery, subject to the process shown in your account. To process any claim for damaged, defective, or missing items, a clear, continuous, unedited unboxing video showing the sealed package being opened is required. Claims without this evidence may not be honored." },
+    { title: "9. Refunds", body: "Approved refunds are issued either to your original payment method or as Darkside Wallet credit, depending on what you select during the return process. Processing times vary by bank/payment provider once we initiate the refund on our end." },
+    { title: "10. Payments & Promo Codes", body: "We accept UPI, credit/debit cards, and Cash on Delivery where available. All transactions are processed securely; we do not store your full payment card details. Promo codes are single-use per account unless stated otherwise, cannot be combined unless explicitly allowed, have no cash value, and may be revoked at any time in cases of suspected abuse." },
+    { title: "11. Intellectual Property", body: "All designs, graphics, logos, product names, and site content are the property of Darkside Clothing and may not be reproduced, copied, or used commercially without prior written permission." },
+    { title: "12. Account & Conduct", body: "You are responsible for maintaining the confidentiality of your account credentials. Any misuse of promo codes, fraudulent orders, reselling of limited drops in a manner that violates these terms, or abusive conduct toward our team may result in account suspension and order cancellation." },
+    { title: "13. Limitation of Liability", body: "To the extent permitted by law, Darkside Clothing is not liable for indirect, incidental, or consequential damages arising from use of this site or its products. Our total liability for any claim is limited to the amount you paid for the order in question." },
+    { title: "14. Force Majeure", body: "We are not responsible for delays or failures in performance resulting from events beyond our reasonable control, including but not limited to natural disasters, courier or logistics disruptions, internet or payment gateway outages, or government action." },
+    { title: "15. Grievance Officer & Contact", body: "In accordance with applicable Indian consumer protection regulations, complaints or concerns can be directed to our Grievance Officer: [Add name], reachable at [Add email/phone]. We aim to acknowledge complaints within 48 hours." },
+    { title: "16. Governing Law", body: "These terms are governed by the laws of India. Any disputes arising from your use of this site will be subject to the exclusive jurisdiction of the courts of Delhi, India." },
+    { title: "17. Changes to These Terms", body: "We may update these Terms & Conditions from time to time. Continued use of the site after changes constitutes acceptance of the revised terms." }
+  ];
+  return (
+    <div className="pt-24 px-4 max-w-3xl mx-auto min-h-screen pb-20">
+      <h2 className={`text-4xl md:text-5xl font-black uppercase tracking-tighter mb-2 ${theme.text}`} style={{ fontFamily: "'Anton', sans-serif" }}>Terms & Conditions</h2>
+      <p className={`font-mono text-xs mb-4 ${theme.textMuted}`}>LAST UPDATED: 2026. PLEASE READ CAREFULLY BEFORE PLACING AN ORDER.</p>
+      <div className="mb-10 p-4 border border-[#D4B876]/40 bg-[#D4B876]/10 text-xs font-mono text-gray-300 leading-relaxed">
+        This is a starting template covering common early-stage gaps, not a substitute for legal advice. The bracketed placeholders (business name, address, grievance officer) need real details filled in, and a qualified professional should review this before you're at meaningful order volume — especially around Indian consumer protection and GST obligations.
+      </div>
+      <div className="space-y-8 font-mono text-sm">
+        {sections.map((s, i) => (
+          <div key={i}>
+            <h3 className={`font-bold uppercase mb-2 ${theme.accent}`}>{s.title}</h3>
+            <p className={`leading-relaxed ${theme.textMuted}`}>{s.body}</p>
+          </div>
+        ))}
       </div>
     </div>
   );
@@ -945,14 +1113,24 @@ const ProductDetail = ({ appState }) => {
            <div className="grid grid-cols-3 gap-3 hidden md:grid">{galleryImages.map((img, i) => (<button key={i} onClick={() => setActiveImage(i)} className={`aspect-square ${theme.card} border overflow-hidden transition-colors ${activeImage === i ? (isLight ? 'border-black' : 'border-[#A6FF3D]') : `${theme.border} hover:border-gray-400`}`}><img src={img} className={`w-full h-full object-cover transition-opacity ${activeImage === i ? 'opacity-100' : 'opacity-60 hover:opacity-100'}`} /></button>))}</div>
          </div>
          <div className="flex flex-col animate-in" style={{ animationDelay: '0.08s' }}>
-           <div className="mb-6 border-b border-gray-200 pb-6">
+           <div className={`mb-6 border-b ${theme.border} pb-6`}>
               <div className="flex items-center gap-2 mb-3"><div className="flex text-[#C7CDD1] drop-shadow-sm">{[1,2,3,4,5].map(star => <Star key={star} size={14} fill="currentColor" />)}</div><span className={`text-xs font-mono ${theme.textMuted}`}>(128 Reviews)</span></div>
-              <h1 className={`text-4xl md:text-5xl font-black uppercase tracking-tighter mb-4 ${theme.text}`} style={{ fontFamily: "'Impact', sans-serif" }}>{selectedProduct.name}</h1>
+              <h1 className={`text-4xl md:text-5xl font-black uppercase tracking-tighter mb-4 ${theme.text}`} style={{ fontFamily: "'Anton', sans-serif" }}>{selectedProduct.name}</h1>
               <p className="text-3xl font-mono font-bold text-transparent bg-clip-text bg-gradient-to-r from-[#A6FF3D] to-[#C7CDD1]">₹{selectedProduct.price}</p>
            </div>
            <div className="mb-8">
               <div className="flex justify-between items-center mb-4"><span className={`font-bold uppercase tracking-widest text-sm ${theme.text}`}>Select Size</span><button onClick={() => setShowSizeAI(true)} className="text-[#C7CDD1] flex items-center gap-2 font-mono text-xs hover:underline cursor-pointer"><Ruler size={14} /> Size Guide</button></div>
-              <div className="grid grid-cols-4 gap-4">{['S', 'M', 'L', 'XL'].map(s => <button key={s} onClick={() => handleSelectSize(s)} className={`h-14 border font-mono text-lg transition-colors ${selectedSize === s ? `${sizePopKey > 0 ? 'animate-size-pop' : ''} ${isLight ? 'border-black bg-black text-white' : 'border-[#A6FF3D] bg-[#A6FF3D]/10 text-[#A6FF3D]'}` : (isLight ? 'border-black/20 text-black hover:border-black hover:bg-black/5' : 'border-white/20 text-white hover:border-[#A6FF3D] hover:text-[#A6FF3D]')}`}>{s}</button>)}</div>
+              <div className="grid grid-cols-4 gap-4">{SIZE_KEYS.map(s => {
+                const sizeStock = selectedProduct.sizes ? (selectedProduct.sizes[s] ?? 0) : null;
+                const soldOut = sizeStock !== null && sizeStock <= 0;
+                return (
+                <button key={s} onClick={() => !soldOut && handleSelectSize(s)} disabled={soldOut} title={soldOut ? 'Sold out' : undefined} className={`relative h-14 border font-mono text-lg transition-colors ${soldOut ? 'border-white/10 text-gray-700 cursor-not-allowed' : selectedSize === s ? `${sizePopKey > 0 ? 'animate-size-pop' : ''} ${isLight ? 'border-black bg-black text-white' : 'border-[#A6FF3D] bg-[#A6FF3D]/10 text-[#A6FF3D]'}` : (isLight ? 'border-black/20 text-black hover:border-black hover:bg-black/5' : 'border-white/20 text-white hover:border-[#A6FF3D] hover:text-[#A6FF3D]')}`}>
+                  {s}
+                  {soldOut && <span className="absolute inset-0 flex items-center justify-center"><span className="w-full h-px bg-white/20 rotate-[-20deg]"></span></span>}
+                  {!soldOut && sizeStock !== null && sizeStock <= 3 && <span className="absolute -top-2 -right-1 text-[8px] bg-red-500 text-white px-1 font-bold">{sizeStock}</span>}
+                </button>
+                );
+              })}</div>
               {sizeError && <p className="text-red-500 text-xs font-mono mt-3 uppercase animate-in">Please select a size to continue.</p>}
               {fitStats && fitStats.total >= 3 && (
                 <p className={`text-xs font-mono mt-4 flex items-center gap-2 ${theme.textMuted}`}><ShieldCheck size={14} className="text-[#D4B876] shrink-0" /> {fitStats.trueToSizePct}% of {fitStats.total} verified buyers say this cut runs true to size</p>
@@ -992,31 +1170,236 @@ const Shop = ({ appState }) => {
     <div className="pt-24 pb-20 px-4 max-w-7xl mx-auto min-h-screen">
       <div className="mb-6 md:mb-8">
         <div className="flex flex-col md:flex-row md:items-end justify-between gap-4 mb-6">
-          <div><h2 className={`text-3xl md:text-5xl font-black uppercase tracking-tighter ${theme.text}`} style={{ fontFamily: "'Impact', sans-serif" }}>{shopCategory === 'All Categories' ? 'The Collection' : shopCategory}</h2><p className={`font-mono text-xs mt-1 md:mt-2 uppercase tracking-widest ${theme.textMuted}`}>[{filteredProducts.length} Items Detected]</p></div>
+          <div><h2 className={`text-3xl md:text-5xl font-black uppercase tracking-tighter ${theme.text}`} style={{ fontFamily: "'Anton', sans-serif" }}>{shopCategory === 'All Categories' ? 'The Collection' : shopCategory}</h2><p className={`font-mono text-xs mt-1 md:mt-2 uppercase tracking-widest ${theme.textMuted}`}>[{filteredProducts.length} Items Detected]</p></div>
           <div className="flex flex-wrap items-center gap-2 md:gap-4"><button onClick={() => setShowVibeMatcher(true)} className="flex-1 md:flex-none justify-center flex items-center gap-2 bg-[#C7CDD1]/10 text-[#C7CDD1] border border-[#C7CDD1]/30 px-4 py-2.5 font-mono text-xs uppercase hover:bg-[#C7CDD1] hover:text-black transition-all"><Sparkles size={14} /> AI Vibe Check</button><div className={`flex items-center border ${theme.border} px-3 py-2.5 flex-1 md:flex-none bg-transparent`}><span className={`text-[10px] uppercase font-bold mr-2 ${theme.textMuted}`}>Sort:</span><select value={sortBy} onChange={e => setSortBy(e.target.value)} className={`bg-transparent font-mono text-xs uppercase outline-none cursor-pointer ${theme.text} w-full`}><option value="recommended" className="bg-black text-white">Recommended</option><option value="price-high" className="bg-black text-white">Price: High to Low</option><option value="price-low" className="bg-black text-white">Price: Low to High</option></select></div></div>
         </div>
         <div className="flex gap-2 overflow-x-auto pb-2 scrollbar-hide">{['All Categories', ...categories].map(cat => (<button key={cat} onClick={() => setShopCategory(cat)} className={`whitespace-nowrap px-6 py-2.5 font-mono text-xs font-bold uppercase border transition-colors ${shopCategory === cat ? (isLight ? 'bg-black text-white border-black' : 'bg-[#A6FF3D] text-black border-[#A6FF3D]') : `border-${isLight?'black/10':'white/10'} ${theme.textMuted} hover:${theme.text} hover:border-${isLight?'black':'white'}`}`}>{cat}</button>))}</div>
       </div>
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 md:gap-6">
-      {filteredProducts.map(product => (
+      {filteredProducts.map(product => {
+        const soldOut = product.sizes && SIZE_KEYS.every(s => (product.sizes[s] || 0) <= 0);
+        return (
         <div key={product.id} className="group cursor-pointer flex flex-col" onClick={() => openProduct(product)}>
-          <div className={`relative aspect-[3/4] ${theme.card} overflow-hidden border ${isLight ? 'border-black/5 group-hover:border-black/50' : 'border-white/5 group-hover:border-[#A6FF3D]/50'} transition-colors mb-3`}><img src={product.image} alt={product.name} className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-105" />{product.badge && <div className={`absolute top-2 left-2 md:top-4 md:left-4 text-[8px] md:text-[10px] font-bold px-2 py-1 uppercase mix-blend-screen ${isLight ? 'bg-black text-white' : 'bg-white text-black'}`}>{product.badge}</div>}<div className="absolute inset-0 bg-[#C7CDD1] mix-blend-overlay opacity-0 group-hover:opacity-20 transition-opacity hidden md:block"></div></div>
+          <div className={`relative aspect-[3/4] ${theme.card} overflow-hidden border ${isLight ? 'border-black/5 group-hover:border-black/50' : 'border-white/5 group-hover:border-[#A6FF3D]/50'} transition-colors mb-3`}><img src={product.image} alt={product.name} className={`w-full h-full object-cover transition-transform duration-700 group-hover:scale-105 ${soldOut ? 'grayscale opacity-50' : ''}`} />{soldOut ? <div className="absolute top-2 left-2 md:top-4 md:left-4 text-[8px] md:text-[10px] font-bold px-2 py-1 uppercase bg-black text-white border border-white/30">Sold Out</div> : product.badge && <div className={`absolute top-2 left-2 md:top-4 md:left-4 text-[8px] md:text-[10px] font-bold px-2 py-1 uppercase mix-blend-screen ${isLight ? 'bg-black text-white' : 'bg-white text-black'}`}>{product.badge}</div>}<div className="absolute inset-0 bg-[#C7CDD1] mix-blend-overlay opacity-0 group-hover:opacity-20 transition-opacity hidden md:block"></div></div>
           <div className="flex flex-col flex-1"><h3 className={`font-bold uppercase tracking-tight text-[11px] md:text-sm mb-1 line-clamp-1 transition-colors ${theme.text} group-hover:text-[#C7CDD1]`}>{product.name}</h3><p className={`font-mono text-[9px] md:text-xs mb-2 ${theme.textMuted}`}>{product.category}</p><span className={`font-mono text-xs md:text-sm mt-auto ${isLight ? 'text-black font-extrabold' : 'text-[#E5E5E5] font-bold'}`}>₹{product.price}</span></div>
         </div>
-      ))}
+        );
+      })}
+      </div>
+    </div>
+  );
+};
+
+const SIZE_KEYS = ['S', 'M', 'L', 'XL'];
+
+const ProductForm = ({ existing, categories, promos, onClose }) => {
+  const blank = {
+    name: '', description: '', category: categories[0] || 'Tops',
+    price: '', compareAtPrice: '', fitBlock: '', badge: '', image: '',
+    sizes: { S: 0, M: 0, L: 0, XL: 0 },
+    promoScope: 'all', promoCodes: []
+  };
+  const [form, setForm] = useState(existing ? { ...blank, ...existing, sizes: { ...blank.sizes, ...(existing.sizes || {}) } } : blank);
+  const [uploading, setUploading] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState('');
+
+  const set = (k, v) => setForm(prev => ({ ...prev, [k]: v }));
+
+  const handleImagePick = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (!file.type.startsWith('image/')) { setErr("That file isn't an image."); return; }
+    if (file.size > 5 * 1024 * 1024) { setErr("Image is over 5MB. Compress it first."); return; }
+    setErr(''); setUploading(true);
+    try {
+      const path = `products/${Date.now()}-${file.name.replace(/[^\w.-]/g, '_')}`;
+      const sref = storageRef(storage, path);
+      await uploadBytes(sref, file);
+      set('image', await getDownloadURL(sref));
+    } catch (e2) {
+      console.error(e2);
+      setErr("Upload failed. Check that Firebase Storage is enabled.");
+    } finally { setUploading(false); }
+  };
+
+  const totalStock = SIZE_KEYS.reduce((s, k) => s + (parseInt(form.sizes[k], 10) || 0), 0);
+
+  const handleSave = async () => {
+    if (!form.name.trim()) { setErr("Name is required."); return; }
+    if (!form.price || parseInt(form.price, 10) <= 0) { setErr("Enter a valid price."); return; }
+    if (!form.image) { setErr("Upload a product image."); return; }
+    setErr(''); setSaving(true);
+    const payload = {
+      name: form.name.toUpperCase().trim(),
+      description: form.description.trim(),
+      category: form.category,
+      price: parseInt(form.price, 10),
+      compareAtPrice: form.compareAtPrice ? parseInt(form.compareAtPrice, 10) : null,
+      fitBlock: form.fitBlock.trim() || null,
+      badge: form.badge.trim() || null,
+      image: form.image,
+      sizes: SIZE_KEYS.reduce((acc, k) => ({ ...acc, [k]: parseInt(form.sizes[k], 10) || 0 }), {}),
+      promoScope: form.promoScope,
+      promoCodes: form.promoScope === 'selected' ? form.promoCodes : [],
+      updatedAt: new Date().toISOString()
+    };
+    try {
+      if (existing?.id) {
+        await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'products', existing.id), payload);
+      } else {
+        await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'products'), { ...payload, createdAt: new Date().toISOString() });
+      }
+      onClose();
+    } catch (e2) {
+      console.error(e2);
+      setErr("Save failed. Check your Firestore rules allow admin writes to products.");
+      setSaving(false);
+    }
+  };
+
+  const field = "w-full p-3 bg-black border border-[#333] text-white text-xs outline-none focus:border-[#A6FF3D]";
+  const label = "block text-[10px] uppercase tracking-widest text-gray-500 mb-2";
+
+  return (
+    <div className="fixed inset-0 z-[80] bg-black/90 backdrop-blur-sm overflow-y-auto p-4 font-mono">
+      <div className="max-w-3xl mx-auto bg-[#0A0A0A] border border-[#333] my-8">
+        <div className="flex justify-between items-center p-5 border-b border-[#333] sticky top-0 bg-[#0A0A0A] z-10">
+          <h3 className="text-lg font-black uppercase text-white">{existing ? 'Edit Product' : 'New Product'}</h3>
+          <button onClick={onClose} className="text-gray-500 hover:text-white"><X size={18} /></button>
+        </div>
+
+        <div className="p-5 space-y-6">
+          {err && <p className="text-red-500 text-xs p-3 bg-red-500/10 border border-red-500/30 flex items-center gap-2"><AlertOctagon size={14} /> {err}</p>}
+
+          <div>
+            <label className={label}>Product Image</label>
+            <div className="flex gap-4 items-start">
+              <div className="w-28 h-36 border border-[#333] bg-black flex items-center justify-center shrink-0 overflow-hidden">
+                {form.image ? <img src={form.image} className="w-full h-full object-cover" /> : <Box size={20} className="text-gray-700" />}
+              </div>
+              <div className="flex-1">
+                <label className={`inline-flex items-center gap-2 px-4 py-2.5 text-[10px] font-bold uppercase tracking-widest cursor-pointer transition-colors ${uploading ? 'bg-[#333] text-gray-500' : 'bg-[#A6FF3D] text-black hover:bg-white'}`}>
+                  {uploading ? <Loader2 size={13} className="animate-spin" /> : <Plus size={13} />}
+                  {uploading ? 'Uploading…' : form.image ? 'Replace Image' : 'Choose From Device'}
+                  <input type="file" accept="image/*" onChange={handleImagePick} disabled={uploading} className="hidden" />
+                </label>
+                <p className="text-[10px] text-gray-600 mt-2">JPG or PNG, up to 5MB. Uploads straight from your phone or computer.</p>
+              </div>
+            </div>
+          </div>
+
+          <div className="grid md:grid-cols-2 gap-4">
+            <div><label className={label}>Name</label><input value={form.name} onChange={e => set('name', e.target.value)} placeholder="ACID WASH TEE V.2" className={field} /></div>
+            <div><label className={label}>Category</label><select value={form.category} onChange={e => set('category', e.target.value)} className={field}>{categories.map(c => <option key={c} value={c} className="bg-black">{c}</option>)}</select></div>
+          </div>
+
+          <div><label className={label}>Description</label><textarea value={form.description} onChange={e => set('description', e.target.value)} rows={3} placeholder="240GSM heavyweight cotton, oversized boxy fit, puff print front." className={`${field} resize-none`} /></div>
+
+          <div className="grid md:grid-cols-3 gap-4">
+            <div><label className={label}>Selling Price (₹)</label><input type="number" value={form.price} onChange={e => set('price', e.target.value)} placeholder="1899" className={field} /></div>
+            <div><label className={label}>Compare-at Price (₹)</label><input type="number" value={form.compareAtPrice} onChange={e => set('compareAtPrice', e.target.value)} placeholder="Optional" className={field} /><p className="text-[9px] text-gray-600 mt-1">Shown struck through</p></div>
+            <div><label className={label}>Badge</label><input value={form.badge} onChange={e => set('badge', e.target.value)} placeholder="NEW DROP" className={field} /></div>
+          </div>
+
+          <div>
+            <label className={label}>Stock Per Size</label>
+            <div className="grid grid-cols-4 gap-3">
+              {SIZE_KEYS.map(s => (
+                <div key={s}>
+                  <p className="text-center text-xs text-white font-bold mb-1">{s}</p>
+                  <input type="number" min="0" value={form.sizes[s]} onChange={e => set('sizes', { ...form.sizes, [s]: e.target.value })} className={`${field} text-center`} />
+                </div>
+              ))}
+            </div>
+            <p className="text-[10px] text-gray-500 mt-2">Total: <span className="text-[#A6FF3D] font-bold">{totalStock}</span> pcs. A size set to 0 shows as sold out and can't be ordered.</p>
+          </div>
+
+          <div><label className={label}>Fit Block</label><input value={form.fitBlock} onChange={e => set('fitBlock', e.target.value)} placeholder="oversized-boxy-tee" className={field} /><p className="text-[9px] text-gray-600 mt-1">Same cut = same block, so fit feedback carries across drops.</p></div>
+
+          <div>
+            <label className={label}>Discount Codes</label>
+            <div className="space-y-2">
+              {[['all', 'All codes work on this product'], ['none', 'No codes — full price only'], ['selected', 'Only specific codes']].map(([val, text]) => (
+                <label key={val} className={`flex items-center gap-3 p-3 border cursor-pointer text-xs ${form.promoScope === val ? 'border-[#A6FF3D] bg-[#A6FF3D]/10 text-[#A6FF3D]' : 'border-[#333] text-gray-400 hover:border-gray-500'}`}>
+                  <input type="radio" checked={form.promoScope === val} onChange={() => set('promoScope', val)} className="accent-[#A6FF3D]" />{text}
+                </label>
+              ))}
+            </div>
+            {form.promoScope === 'selected' && (
+              <div className="mt-3 p-3 border border-[#333] bg-black">
+                {promos.length === 0 ? <p className="text-[10px] text-gray-600">No codes created yet — add them in Marketing &amp; Promos first.</p> : (
+                  <div className="grid grid-cols-2 gap-2">
+                    {promos.map(p => (
+                      <label key={p.code} className="flex items-center gap-2 text-[11px] text-gray-300 cursor-pointer">
+                        <input type="checkbox" checked={form.promoCodes.includes(p.code)} onChange={e => set('promoCodes', e.target.checked ? [...form.promoCodes, p.code] : form.promoCodes.filter(c => c !== p.code))} className="accent-[#A6FF3D]" />
+                        <span className="font-bold text-white">{p.code}</span><span className="text-gray-500">{p.discount}</span>
+                      </label>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+
+        <div className="p-5 border-t border-[#333] flex gap-3 sticky bottom-0 bg-[#0A0A0A]">
+          <button onClick={onClose} className="px-6 py-3 border border-[#333] text-gray-400 text-xs font-bold uppercase tracking-widest hover:text-white">Cancel</button>
+          <button onClick={handleSave} disabled={saving || uploading} className="flex-1 bg-[#A6FF3D] text-black py-3 text-xs font-black uppercase tracking-widest hover:bg-white disabled:opacity-50 flex items-center justify-center gap-2">
+            {saving ? <Loader2 size={14} className="animate-spin" /> : <CheckCircle size={14} />}{existing ? 'Save Changes' : 'Publish Product'}
+          </button>
+        </div>
       </div>
     </div>
   );
 };
 
 const AdminPanel = ({ appState }) => {
-  const { handleNavigate, user, products, setProducts, categories, setCategories } = appState;
+  const { handleNavigate, user, products, categories, setCategories, catalogIsLive, settings } = appState;
   const [adminView, setAdminView] = useState('dashboard');
   const [orders, setOrders] = useState([]);
   const [tickets, setTickets] = useState([]);
   const [expandedOrderId, setExpandedOrderId] = useState(null);
   const [isVerifiedAdmin, setIsVerifiedAdmin] = useState(null);
-  const [promos, setPromos] = useState([{ code: 'NEON20', discount: '20% OFF', usage: '142 / 500', status: 'Active' }]);
+  const [promos, setPromos] = useState([]);
+  const [editingProduct, setEditingProduct] = useState(null);
+  const [showProductForm, setShowProductForm] = useState(false);
+  const [seeding, setSeeding] = useState(false);
+  const [draft, setDraft] = useState(settings);
+  const [savingSettings, setSavingSettings] = useState(false);
+  const [settingsSaved, setSettingsSaved] = useState(false);
+
+  useEffect(() => { setDraft(settings); }, [settings]);
+
+  const adminField = "w-full p-3 bg-black border border-[#333] text-white text-xs outline-none focus:border-[#A6FF3D]";
+  const adminLabel = "block text-[10px] uppercase tracking-widest text-gray-500 mb-2";
+
+  const handleSaveSettings = async () => {
+    setSavingSettings(true); setSettingsSaved(false);
+    try {
+      await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'settings', 'site'), {
+        ...draft,
+        freeShippingThreshold: parseInt(draft.freeShippingThreshold, 10) || 0,
+        shippingFee: parseInt(draft.shippingFee, 10) || 0,
+        updatedAt: new Date().toISOString()
+      }, { merge: true });
+      setSettingsSaved(true);
+      setTimeout(() => setSettingsSaved(false), 4000);
+    } catch (e) {
+      console.error(e);
+      alert("Couldn't save settings. Check Firestore rules allow admin writes to settings.");
+    } finally { setSavingSettings(false); }
+  };
+
+  useEffect(() => {
+    if (!isVerifiedAdmin) return;
+    const unsub = onSnapshot(
+      collection(db, 'artifacts', appId, 'public', 'data', 'promos'),
+      (snap) => setPromos(snap.docs.map(d => ({ id: d.id, ...d.data() }))),
+      (err) => console.error("Promo load failed:", err)
+    );
+    return () => unsub();
+  }, [isVerifiedAdmin]);
   const [crmSearch, setCrmSearch] = useState('');
 
   useEffect(() => {
@@ -1081,32 +1464,34 @@ const AdminPanel = ({ appState }) => {
      }
   };
 
-  const handleAddProduct = () => {
-    const name = prompt("Enter new product name:");
-    if (!name) return;
-    const price = prompt("Enter price (INR):", "2999");
-    const category = prompt(`Enter category (${categories.join('/')}):`, categories[0] || "Tops");
-    const image = prompt("Paste Image URL:", "https://images.unsplash.com/photo-1556821840-3a63f95609a7?auto=format&fit=crop&q=80&w=800");
-    const existingBlocks = [...new Set(products.map(p => p.fitBlock).filter(Boolean))];
-    const fitBlock = prompt(`Fit block cut pattern:\nExisting blocks: ${existingBlocks.join(', ') || 'none'}\nEnter block id:`, '');
-
-    const newProduct = {
-       id: Date.now(),
-       name: name.toUpperCase(),
-       price: parseInt(price, 10) || 2999,
-       category: category || categories[0],
-       stock: 10,
-       image: image || "https://images.unsplash.com/photo-1556821840-3a63f95609a7?auto=format&fit=crop&q=80&w=800",
-       badge: "NEW DROP",
-       fitBlock: (fitBlock && fitBlock.trim()) || null
-    };
-    setProducts([newProduct, ...products]);
+  const handleDeleteProduct = async (prodId) => {
+    if (!window.confirm("Delete this product permanently?")) return;
+    try {
+      await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'products', String(prodId)));
+    } catch (e) {
+      console.error(e);
+      alert("Delete failed. If this is a placeholder product it isn't in the database yet.");
+    }
   };
 
-  const handleDeleteProduct = (prodId) => {
-    if (window.confirm("Are you sure you want to delete this product?")) {
-      setProducts(products.filter(p => p.id !== prodId));
-    }
+  const handleSeedCatalog = async () => {
+    if (!window.confirm("Import the 6 placeholder products into your live catalog? You can edit or delete them after.")) return;
+    setSeeding(true);
+    try {
+      for (const p of INITIAL_PRODUCTS) {
+        const { id, stock, ...rest } = p;
+        await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'products'), {
+          ...rest,
+          description: '',
+          compareAtPrice: null,
+          sizes: { S: stock, M: stock, L: stock, XL: stock },
+          promoScope: 'all',
+          promoCodes: [],
+          createdAt: new Date().toISOString()
+        });
+      }
+    } catch (e) { console.error(e); alert("Import failed — check Firestore rules."); }
+    finally { setSeeding(false); }
   };
 
   const handleAddCategory = () => {
@@ -1116,17 +1501,29 @@ const AdminPanel = ({ appState }) => {
      }
   };
 
-  const handleAddPromo = () => {
-    const code = prompt("Enter New Promo Code (e.g. CYBER50):");
+  const handleAddPromo = async () => {
+    const code = prompt("Promo code (e.g. CYBER50):");
     if (!code) return;
-    const discount = prompt("Enter Discount details (e.g. 50% OFF):", "10% OFF");
-    setPromos([{ code: code.toUpperCase(), discount, usage: '0 / 100', status: 'Active' }, ...promos]);
+    const discount = prompt("Discount label (e.g. 20% OFF):", "10% OFF");
+    if (!discount) return;
+    const limit = prompt("Max total uses:", "100");
+    try {
+      await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'promos', code.toUpperCase().trim()), {
+        code: code.toUpperCase().trim(),
+        discount,
+        maxUses: parseInt(limit, 10) || 100,
+        uses: 0,
+        status: 'Active',
+        createdAt: new Date().toISOString()
+      });
+    } catch (e) { console.error(e); alert("Couldn't save promo code."); }
   };
 
-  const handleRevokePromo = (codeToRevoke) => {
-    if (window.confirm(`Revoke promo code ${codeToRevoke}?`)) {
-      setPromos(promos.map(p => p.code === codeToRevoke ? { ...p, status: 'Revoked' } : p));
-    }
+  const handleRevokePromo = async (codeToRevoke) => {
+    if (!window.confirm(`Revoke promo code ${codeToRevoke}?`)) return;
+    try {
+      await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'promos', codeToRevoke), { status: 'Revoked' });
+    } catch (e) { console.error(e); alert("Couldn't revoke code."); }
   };
 
   const crmUsersMap = {};
@@ -1140,6 +1537,7 @@ const AdminPanel = ({ appState }) => {
   const crmUsers = Object.values(crmUsersMap).filter(u => u.email.toLowerCase().includes(crmSearch.toLowerCase()));
 
   const DronaTabs = [
+    { id: 'settings', icon: SettingsIcon, label: 'Site Settings' },
     { id: 'dashboard', icon: LayoutDashboard, label: 'Analytics Dashboard' }, 
     { id: 'orders', icon: Package, label: 'Fulfillment Tracking' }, 
     { id: 'products', icon: Box, label: 'Product & Catalog' }, 
@@ -1160,16 +1558,94 @@ const AdminPanel = ({ appState }) => {
 
   return (
     <div className="min-h-screen bg-[#050505] text-[#E5E5E5] flex flex-col md:flex-row cursor-default font-mono selection:bg-[#A6FF3D] selection:text-black">
+      {showProductForm && (
+        <ProductForm
+          existing={editingProduct}
+          categories={categories}
+          promos={promos.filter(p => p.status === 'Active')}
+          onClose={() => { setShowProductForm(false); setEditingProduct(null); }}
+        />
+      )}
       <div className="w-full md:w-72 bg-[#0A0A0A] border-r border-[#333] flex flex-col h-screen sticky top-0">
-        <div className="p-6 border-b border-[#333] flex items-center justify-between bg-black"><div><h1 className="text-2xl font-black uppercase text-[#A6FF3D]" style={{ fontFamily: "'Impact', sans-serif" }}>SYS.ADMIN</h1><p className="text-[10px] text-[#C7CDD1] mt-1">SECURE TERMINAL</p></div><button onClick={() => handleNavigate('home')} className="text-gray-500 hover:text-white p-2 border border-[#333] bg-[#0A0A0A]"><X size={14} /></button></div>
+        <div className="p-6 border-b border-[#333] flex items-center justify-between bg-black"><div><h1 className="text-2xl font-black uppercase text-[#A6FF3D]" style={{ fontFamily: "'Anton', sans-serif" }}>SYS.ADMIN</h1><p className="text-[10px] text-[#C7CDD1] mt-1">SECURE TERMINAL</p></div><button onClick={() => handleNavigate('home')} className="text-gray-500 hover:text-white p-2 border border-[#333] bg-[#0A0A0A]"><X size={14} /></button></div>
         <div className="p-4 space-y-1 flex-1 overflow-y-auto">{DronaTabs.map(item => (<button key={item.id} onClick={() => setAdminView(item.id)} className={`w-full flex items-center justify-between px-4 py-3 uppercase text-xs font-bold border transition-colors ${adminView === item.id ? 'bg-[#A6FF3D]/10 border-[#A6FF3D] text-[#A6FF3D]' : 'border-transparent text-gray-500 hover:text-white hover:bg-white/5 hover:border-[#333]'}`}><div className="flex items-center gap-3"><item.icon size={14} /> {item.label}</div>{item.id === 'tickets' && tickets.filter(t=>t.status==='OPEN').length > 0 && <span className="bg-red-500 text-white px-2 py-0.5 rounded-full text-[10px]">{tickets.filter(t=>t.status==='OPEN').length}</span>}</button>))}</div>
         <div className="p-4 border-t border-[#333] bg-black"><div className="flex items-center gap-3"><div className="w-8 h-8 rounded bg-[#C7CDD1] flex items-center justify-center font-bold text-black text-xs">AD</div><div><p className="text-xs font-bold text-white">MASTER ADMIN</p><p className="text-[10px] text-green-500 flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-green-500 inline-block animate-pulse"></span> ONLINE</p></div></div></div>
       </div>
       <div className="flex-1 p-4 md:p-8 h-screen overflow-y-auto bg-[url('https://www.transparenttextures.com/patterns/cubes.png')] bg-repeat">
         <div className="max-w-6xl mx-auto">
           
+          {adminView === 'settings' && (
+            <div className="animate-in fade-in max-w-3xl">
+              <div className="flex justify-between items-end mb-8 border-b border-[#333] pb-4">
+                <div>
+                  <h2 className="text-2xl font-black uppercase text-white">Site Settings</h2>
+                  <p className="text-xs text-gray-500 mt-1">Changes go live instantly — no redeploy</p>
+                </div>
+              </div>
+
+              {settingsSaved && <p className="mb-6 text-[#A6FF3D] text-xs p-3 bg-[#A6FF3D]/10 border border-[#A6FF3D]/30 flex items-center gap-2"><CheckCircle size={14}/> Saved. Refresh your storefront to see it.</p>}
+
+              <div className="space-y-8">
+                <div className="bg-[#0A0A0A] border border-[#333] p-5">
+                  <h3 className="text-[#A6FF3D] font-bold uppercase text-xs mb-4 pb-3 border-b border-[#333]">Homepage Text</h3>
+                  <div className="space-y-4">
+                    <div><label className={adminLabel}>Big Headline</label><input value={draft.heroHeadline} onChange={e=>setDraft({...draft, heroHeadline: e.target.value})} className={adminField} /><p className="text-[9px] text-gray-600 mt-1">Last word gets the green gradient automatically.</p></div>
+                    <div><label className={adminLabel}>Sub-line</label><input value={draft.heroSubline} onChange={e=>setDraft({...draft, heroSubline: e.target.value})} className={adminField} /></div>
+                    <div><label className={adminLabel}>Notice Badge</label><input value={draft.heroNotice} onChange={e=>setDraft({...draft, heroNotice: e.target.value})} placeholder="GOING TO BE LIVE SOON" className={adminField} /><p className="text-[9px] text-gray-600 mt-1">Shown when the countdown is off. Leave blank to hide it.</p></div>
+                    <div><label className={adminLabel}>Scrolling Marquee</label><textarea rows={2} value={draft.marqueeText} onChange={e=>setDraft({...draft, marqueeText: e.target.value})} className={`${adminField} resize-none`} /></div>
+                  </div>
+                </div>
+
+                <div className="bg-[#0A0A0A] border border-[#333] p-5">
+                  <h3 className="text-[#A6FF3D] font-bold uppercase text-xs mb-4 pb-3 border-b border-[#333]">Drop Countdown</h3>
+                  <label className="flex items-center gap-3 mb-4 cursor-pointer">
+                    <input type="checkbox" checked={draft.timerEnabled} onChange={e=>setDraft({...draft, timerEnabled: e.target.checked})} className="accent-[#A6FF3D] w-4 h-4" />
+                    <span className="text-xs text-white font-bold uppercase">Show countdown instead of the notice badge</span>
+                  </label>
+                  <div className="grid md:grid-cols-2 gap-4">
+                    <div><label className={adminLabel}>Counts Down To</label><input type="datetime-local" value={draft.timerEndsAt} onChange={e=>setDraft({...draft, timerEndsAt: e.target.value})} className={adminField} /></div>
+                    <div><label className={adminLabel}>Label Above Timer</label><input value={draft.timerLabel} onChange={e=>setDraft({...draft, timerLabel: e.target.value})} className={adminField} /></div>
+                  </div>
+                  <p className="text-[10px] text-gray-500 mt-3">
+                    {draft.timerEnabled && draft.timerEndsAt
+                      ? (new Date(draft.timerEndsAt).getTime() > Date.now()
+                          ? `Live now — counting down, then your notice text comes back automatically.`
+                          : `That date is in the past, so the notice text shows instead.`)
+                      : 'Off — showing the notice badge.'}
+                  </p>
+                </div>
+
+                <div className="bg-[#0A0A0A] border border-[#333] p-5">
+                  <h3 className="text-[#A6FF3D] font-bold uppercase text-xs mb-4 pb-3 border-b border-[#333]">Shipping &amp; Payment</h3>
+                  <div className="grid md:grid-cols-2 gap-4">
+                    <div><label className={adminLabel}>Free Shipping Above (₹)</label><input type="number" value={draft.freeShippingThreshold} onChange={e=>setDraft({...draft, freeShippingThreshold: e.target.value})} className={adminField} /></div>
+                    <div><label className={adminLabel}>Shipping Fee (₹)</label><input type="number" value={draft.shippingFee} onChange={e=>setDraft({...draft, shippingFee: e.target.value})} className={adminField} /></div>
+                  </div>
+                  <label className="flex items-center gap-3 mt-4 cursor-pointer">
+                    <input type="checkbox" checked={draft.codEnabled} onChange={e=>setDraft({...draft, codEnabled: e.target.checked})} className="accent-[#A6FF3D] w-4 h-4" />
+                    <span className="text-xs text-white font-bold uppercase">Offer Cash on Delivery</span>
+                  </label>
+                </div>
+
+                <div className="bg-[#0A0A0A] border border-[#333] p-5">
+                  <h3 className="text-[#A6FF3D] font-bold uppercase text-xs mb-4 pb-3 border-b border-[#333]">Store Status</h3>
+                  <label className="flex items-center gap-3 mb-4 cursor-pointer">
+                    <input type="checkbox" checked={draft.storeOpen} onChange={e=>setDraft({...draft, storeOpen: e.target.checked})} className="accent-[#A6FF3D] w-4 h-4" />
+                    <span className="text-xs text-white font-bold uppercase">Store open — accepting orders</span>
+                  </label>
+                  <div><label className={adminLabel}>Message When Closed</label><input value={draft.storeClosedMessage} onChange={e=>setDraft({...draft, storeClosedMessage: e.target.value})} className={adminField} /></div>
+                  <p className="text-[9px] text-gray-600 mt-2">Turning this off blocks checkout but keeps the site browsable — useful between drops.</p>
+                </div>
+
+                <button onClick={handleSaveSettings} disabled={savingSettings} className="w-full bg-[#A6FF3D] text-black py-4 text-xs font-black uppercase tracking-widest hover:bg-white disabled:opacity-50 flex items-center justify-center gap-2">
+                  {savingSettings ? <Loader2 size={14} className="animate-spin" /> : <CheckCircle size={14} />} Save Settings
+                </button>
+              </div>
+            </div>
+          )}
+
           {adminView === 'dashboard' && (
-            <div className="animate-in fade-in"><div className="flex justify-between items-end mb-8 border-b border-[#333] pb-4"><div><h2 className="text-2xl font-black uppercase text-white">Analytics Dashboard</h2><p className="text-xs text-gray-500 mt-1">Live metrics overview</p></div><button onClick={() => window.print()} className="bg-[#A6FF3D] text-black text-xs font-bold px-4 py-2 uppercase hover:bg-white transition-colors">Export PDF Report</button></div><div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8"><div className="bg-[#0A0A0A] border border-[#333] p-5"><p className="text-[10px] text-gray-500 mb-2 uppercase">Gross Revenue</p><p className="text-3xl text-[#A6FF3D]">₹{totalRevenue}</p></div><div className="bg-[#0A0A0A] border border-[#333] p-5"><p className="text-[10px] text-gray-500 mb-2 uppercase">Order Volume</p><p className="text-3xl text-white">{orders.length}</p></div><div className="bg-[#0A0A0A] border border-[#333] p-5"><p className="text-[10px] text-gray-500 mb-2 uppercase">Open Tickets</p><p className="text-3xl text-red-500">{tickets.filter(t=>t.status==='OPEN').length}</p></div><div className="bg-[#0A0A0A] border border-[#333] p-5"><p className="text-[10px] text-gray-500 mb-2 uppercase">Cart Abandonment</p><p className="text-3xl text-white">64%</p></div></div></div>
+            <div className="animate-in fade-in"><div className="flex justify-between items-end mb-8 border-b border-[#333] pb-4"><div><h2 className="text-2xl font-black uppercase text-white">Analytics Dashboard</h2><p className="text-xs text-gray-500 mt-1">Live metrics overview</p></div><button onClick={() => window.print()} className="bg-[#A6FF3D] text-black text-xs font-bold px-4 py-2 uppercase hover:bg-white transition-colors">Export PDF Report</button></div><div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8"><div className="bg-[#0A0A0A] border border-[#333] p-5"><p className="text-[10px] text-gray-500 mb-2 uppercase">Gross Revenue</p><p className="text-3xl text-[#A6FF3D]">₹{totalRevenue}</p></div><div className="bg-[#0A0A0A] border border-[#333] p-5"><p className="text-[10px] text-gray-500 mb-2 uppercase">Order Volume</p><p className="text-3xl text-white">{orders.length}</p></div><div className="bg-[#0A0A0A] border border-[#333] p-5"><p className="text-[10px] text-gray-500 mb-2 uppercase">Open Tickets</p><p className="text-3xl text-red-500">{tickets.filter(t=>t.status==='OPEN').length}</p></div><div className="bg-[#0A0A0A] border border-[#333] p-5"><p className="text-[10px] text-gray-500 mb-2 uppercase">Avg. Order Value</p><p className="text-3xl text-white">₹{orders.length > 0 ? Math.round(totalRevenue / orders.length) : 0}</p></div></div></div>
           )}
           
           {adminView === 'tickets' && (
@@ -1247,31 +1723,62 @@ const AdminPanel = ({ appState }) => {
           
           {adminView === 'products' && (
             <div className="animate-in fade-in">
-              <div className="flex justify-between items-end mb-8 border-b border-[#333] pb-4">
-                <h2 className="text-2xl font-black uppercase text-white">Product Catalog</h2>
-                <div className="flex gap-4">
+              <div className="flex flex-wrap gap-4 justify-between items-end mb-8 border-b border-[#333] pb-4">
+                <div>
+                  <h2 className="text-2xl font-black uppercase text-white">Product Catalog</h2>
+                  <p className="text-xs text-gray-500 mt-1">{catalogIsLive ? `${products.length} live product${products.length !== 1 ? 's' : ''}` : 'Showing placeholders — nothing published yet'}</p>
+                </div>
+                <div className="flex gap-3">
                   <button onClick={handleAddCategory} className="bg-[#111] border border-[#333] text-white px-4 py-2 text-xs font-bold uppercase hover:bg-white hover:text-black transition-colors">
-                    + Add Category
+                    + Category
                   </button>
-                  <button onClick={handleAddProduct} className="bg-[#C7CDD1] text-black px-4 py-2 text-xs font-bold uppercase flex items-center gap-2 hover:bg-white transition-colors">
-                    <Plus size={14}/> Inject Product
+                  <button onClick={() => { setEditingProduct(null); setShowProductForm(true); }} className="bg-[#A6FF3D] text-black px-4 py-2 text-xs font-bold uppercase flex items-center gap-2 hover:bg-white transition-colors">
+                    <Plus size={14}/> New Product
                   </button>
                 </div>
               </div>
+
+              {!catalogIsLive && (
+                <div className="mb-6 p-5 border border-[#D4B876]/40 bg-[#D4B876]/10 flex flex-wrap gap-4 justify-between items-center">
+                  <div>
+                    <p className="text-[#D4B876] font-bold text-sm uppercase mb-1">Catalog is not live yet</p>
+                    <p className="text-xs text-gray-400">The products below are demo placeholders and can't be edited or sold. Publish a real product, or import these to start from.</p>
+                  </div>
+                  <button onClick={handleSeedCatalog} disabled={seeding} className="bg-[#D4B876] text-black px-4 py-2 text-xs font-bold uppercase hover:bg-white disabled:opacity-50 flex items-center gap-2">
+                    {seeding ? <Loader2 size={13} className="animate-spin" /> : <Box size={13} />} Import Placeholders
+                  </button>
+                </div>
+              )}
+
               <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                {products.map(p=>(
+                {products.map(p=>{
+                  const sizes = p.sizes || {};
+                  const total = SIZE_KEYS.reduce((s,k) => s + (sizes[k] || 0), 0);
+                  return (
                   <div key={p.id} className="bg-[#0A0A0A] border border-[#333] flex flex-col group relative">
-                    <img src={p.image} className="w-full h-40 object-cover mb-2 grayscale opacity-60 group-hover:opacity-100 group-hover:grayscale-0 transition-all"/>
+                    <img src={p.image} className="w-full h-40 object-cover grayscale opacity-60 group-hover:opacity-100 group-hover:grayscale-0 transition-all"/>
                     <div className="p-4 flex flex-col flex-1">
                       <p className="text-xs text-white font-bold truncate uppercase">{p.name}</p>
-                      <p className="text-[10px] text-gray-500 mb-2">{p.category}</p>
-                      <p className="text-[#A6FF3D] text-xs font-bold mt-auto">₹{p.price}</p>
+                      <p className="text-[10px] text-gray-500 mb-3">{p.category}</p>
+                      <div className="flex gap-1 mb-3">
+                        {SIZE_KEYS.map(s => (
+                          <span key={s} className={`flex-1 text-center text-[9px] py-1 border ${(sizes[s]||0) === 0 ? 'border-[#333] text-gray-700' : (sizes[s]||0) <= 3 ? 'border-red-500/40 text-red-500' : 'border-[#333] text-gray-400'}`}>{s}:{sizes[s] ?? '–'}</span>
+                        ))}
+                      </div>
+                      <div className="flex justify-between items-end mt-auto">
+                        <span className="text-[#A6FF3D] text-xs font-bold">₹{p.price}</span>
+                        <span className={`text-[9px] ${total === 0 ? 'text-red-500' : 'text-gray-500'}`}>{catalogIsLive ? `${total} pcs` : 'demo'}</span>
+                      </div>
                     </div>
-                    <button onClick={() => handleDeleteProduct(p.id)} className="absolute top-2 right-2 bg-red-500 text-white p-2 opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-600 rounded-sm">
-                      <Trash2 size={12}/>
-                    </button>
+                    {catalogIsLive && (
+                      <div className="absolute top-2 right-2 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                        <button onClick={() => { setEditingProduct(p); setShowProductForm(true); }} className="bg-[#A6FF3D] text-black p-2 hover:bg-white rounded-sm" title="Edit"><SettingsIcon size={12}/></button>
+                        <button onClick={() => handleDeleteProduct(p.id)} className="bg-red-500 text-white p-2 hover:bg-red-600 rounded-sm" title="Delete"><Trash2 size={12}/></button>
+                      </div>
+                    )}
                   </div>
-                ))}
+                  );
+                })}
               </div>
             </div>
           )}
@@ -1356,7 +1863,7 @@ const Vault = ({ appState }) => {
   const { theme, wishlist, openProduct } = appState;
   return (
     <div className="pt-24 px-4 max-w-7xl mx-auto min-h-screen text-center">
-      <h2 className={`text-4xl font-black uppercase tracking-tighter mb-4 ${theme.text}`} style={{ fontFamily: "'Impact', sans-serif" }}>The Vault</h2>
+      <h2 className={`text-4xl font-black uppercase tracking-tighter mb-4 ${theme.text}`} style={{ fontFamily: "'Anton', sans-serif" }}>The Vault</h2>
       {wishlist.length === 0 ? ( <p className={`font-mono ${theme.textMuted}`}>YOUR VAULT IS EMPTY.</p> ) : (
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-8 text-left">
             {wishlist.map(w => (
@@ -1369,7 +1876,22 @@ const Vault = ({ appState }) => {
 };
 
 const Home = ({ appState }) => {
-  const { enterVault } = appState;
+  const { enterVault, settings } = appState;
+  const [timerDone, setTimerDone] = useState(false);
+
+  // Timer shows only if switched on, given a future date, and not yet elapsed.
+  const timerActive = settings.timerEnabled
+    && !!settings.timerEndsAt
+    && !timerDone
+    && new Date(settings.timerEndsAt).getTime() > Date.now();
+
+  useEffect(() => { setTimerDone(false); }, [settings.timerEndsAt, settings.timerEnabled]);
+
+  // Headline: last word gets the gradient/glitch treatment.
+  const words = (settings.heroHeadline || '').trim().split(' ');
+  const headTail = words.length > 1 ? words.pop() : '';
+  const headLead = words.join(' ');
+
   return (
     <>
       <div className="relative min-h-screen pt-24 pb-12 flex flex-col items-center justify-center overflow-hidden bg-[#050505] border-b border-white/10 group">
@@ -1380,10 +1902,22 @@ const Home = ({ appState }) => {
         <div className="absolute bottom-16 right-8 flex items-center gap-4 hidden md:flex opacity-40"><div className="text-right text-gray-500 font-mono text-[10px] tracking-widest">TARGET ACQUIRED<br/>AWAITING DIRECTIVE</div><Crosshair size={32} className="text-[#C7CDD1] animate-spin-slow" /></div>
         <div className="relative z-10 text-center px-4 w-full max-w-4xl flex flex-col items-center mt-8">
           <div className="opacity-0 animate-reveal-1 mb-8"><img src={darksideLogo} alt="The Darkside" className="h-24 md:h-32 lg:h-40 object-contain drop-shadow-[0_0_30px_rgba(166,255,61,0.15)]" /></div>
-          <div className="mb-6 inline-flex items-center gap-2 bg-red-500/10 border border-red-500/50 text-red-500 px-4 py-1 text-xs font-mono font-bold tracking-widest animate-pulse opacity-0 animate-reveal-2"><Zap size={14} /> EXCLUSIVE DROP RELEASING IN</div>
-          <div className="opacity-0 animate-reveal-3"><CountdownTimer /></div>
-          <h1 className="text-5xl md:text-7xl lg:text-8xl font-black text-white uppercase tracking-tighter mb-2 font-display opacity-0 animate-reveal-4">THE <span className="text-transparent bg-clip-text bg-gradient-to-r from-[#A6FF3D] to-[#C7CDD1] glitch-hover" data-text="SYNDICATE">SYNDICATE</span> COLLECTION</h1>
-          <p className="text-gray-400 font-mono tracking-[0.2em] uppercase text-sm mb-8 opacity-0 animate-reveal-4">Darkside — Embrace the light.</p>
+
+          {timerActive ? (
+            <>
+              <div className="mb-6 inline-flex items-center gap-2 bg-red-500/10 border border-red-500/50 text-red-500 px-4 py-1 text-xs font-mono font-bold tracking-widest animate-pulse opacity-0 animate-reveal-2"><Zap size={14} /> {settings.timerLabel}</div>
+              <div className="opacity-0 animate-reveal-3">
+                <CountdownTimer endsAt={settings.timerEndsAt} onExpire={() => setTimerDone(true)} />
+              </div>
+            </>
+          ) : settings.heroNotice ? (
+            <div className="mb-8 inline-flex items-center gap-2 border border-[#A6FF3D]/50 bg-[#A6FF3D]/10 text-[#A6FF3D] px-6 py-2 text-xs md:text-sm font-mono font-bold tracking-[0.2em] opacity-0 animate-reveal-2">
+              <Zap size={14} /> {settings.heroNotice}
+            </div>
+          ) : null}
+
+          <h1 className="text-5xl md:text-7xl lg:text-8xl font-black text-white uppercase tracking-tighter mb-2 font-display opacity-0 animate-reveal-4">{headLead} {headTail && <span className="text-transparent bg-clip-text bg-gradient-to-r from-[#A6FF3D] to-[#C7CDD1] glitch-hover" data-text={headTail}>{headTail}</span>}</h1>
+          <p className="text-gray-400 font-mono tracking-[0.2em] uppercase text-sm mb-8 opacity-0 animate-reveal-4">{settings.heroSubline}</p>
           <div className="opacity-0 animate-reveal-4 mt-4 mb-8">
             <button onClick={enterVault} className="bg-white text-black px-12 py-5 font-bold uppercase tracking-widest transition-all relative overflow-hidden group/btn border border-white hover:border-[#A6FF3D] hover:shadow-[0_0_20px_rgba(166,255,61,0.3)]">
               <div className="absolute inset-0 bg-[#A6FF3D] translate-y-full group-hover/btn:translate-y-0 transition-transform duration-300 ease-in-out z-0"></div>
@@ -1394,7 +1928,7 @@ const Home = ({ appState }) => {
       </div>
       <div className="w-full bg-[#A6FF3D] py-3 overflow-hidden border-y border-black relative z-20 shadow-[0_0_20px_rgba(166,255,61,0.2)]">
         <div className="animate-marquee whitespace-nowrap text-black font-bold font-mono text-sm tracking-widest flex items-center">
-          {[...Array(4)].map((_, i) => (<span key={i} className="mx-4">✦ DARKSIDE - EMBRACE THE LIGHT ✦ 100% HEAVYWEIGHT COTTON ✦ FREE SHIPPING PAN-INDIA ✦ CASH ON DELIVERY AVAILABLE ✦ NOT MADE FOR EVERYONE </span>))}
+          {[...Array(4)].map((_, i) => (<span key={i} className="mx-4">{settings.marqueeText} </span>))}
         </div>
       </div>
     </>
@@ -1405,19 +1939,37 @@ const Footer = ({ appState }) => {
   const { view, theme, handleNavigate } = appState;
   const [email, setEmail] = useState('');
   const [joined, setJoined] = useState(false);
+  const [joining, setJoining] = useState(false);
   if (view === 'admin' || view === 'profile-setup') return null;
+
+  const handleJoin = async (e) => {
+    e.preventDefault();
+    if (!email) return;
+    setJoining(true);
+    try {
+      await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'newsletter', email.toLowerCase().trim()), {
+        email: email.toLowerCase().trim(),
+        joinedAt: new Date().toISOString()
+      });
+      setJoined(true);
+    } catch (e2) {
+      console.error(e2);
+      setJoined(true); // don't block the user over a marketing-list write failure
+    } finally { setJoining(false); }
+  };
+
   return (
     <footer className={`${theme.bg} border-t ${theme.border} py-12 px-4 mt-20 transition-colors duration-1000`}>
       <div className="max-w-7xl mx-auto grid md:grid-cols-2 gap-12 items-center">
         <div>
-          <h2 className={`text-4xl font-black uppercase tracking-tighter mb-2 ${theme.text}`} style={{ fontFamily: "'Impact', sans-serif" }}>Join The Underground</h2>
+          <h2 className={`text-4xl font-black uppercase tracking-tighter mb-2 ${theme.text}`} style={{ fontFamily: "'Anton', sans-serif" }}>Join The Underground</h2>
           <p className={`font-mono text-xs mb-6 max-w-sm ${theme.textMuted}`}>No spam. Only restock alerts and secret drops.</p>
           {joined ? (
             <div className={`font-bold font-mono text-sm uppercase ${theme.accent} flex items-center gap-2`}><CheckCircle size={16}/> Frequency Logged. Welcome.</div>
           ) : (
-            <form onSubmit={(e)=>{e.preventDefault(); if (email) setJoined(true);}} className="flex">
+            <form onSubmit={handleJoin} className="flex">
               <input type="email" required value={email} onChange={e=>setEmail(e.target.value)} placeholder="Email Identifier..." className={`bg-transparent border p-3 font-mono outline-none w-64 ${theme.input}`} />
-              <button type="submit" className={`font-bold px-6 uppercase transition-colors ${theme.btnPrimary}`}>Join</button>
+              <button type="submit" disabled={joining} className={`font-bold px-6 uppercase transition-colors disabled:opacity-50 ${theme.btnPrimary}`}>{joining ? <Loader2 size={14} className="animate-spin" /> : 'Join'}</button>
             </form>
           )}
         </div>
@@ -1426,7 +1978,7 @@ const Footer = ({ appState }) => {
           <p>© 2026 DARKSIDE CLOTHING INDIA.</p>
           <div className="flex gap-4 md:justify-end mt-4 pt-4 border-t border-gray-500/20">
              <button onClick={()=>handleNavigate('help')} className="hover:text-white uppercase tracking-widest">Help & FAQs</button>
-             <button className="hover:text-white uppercase tracking-widest">Terms & Conditions</button>
+             <button onClick={()=>handleNavigate('terms')} className="hover:text-white uppercase tracking-widest">Terms & Conditions</button>
           </div>
         </div>
       </div>
@@ -1446,6 +1998,7 @@ const AppContent = ({ appState }) => {
     case 'checkout': return <CheckoutView appState={appState} />;
     case 'vault': return <Vault appState={appState} />;
     case 'help': return <HelpCenter appState={appState} />;
+    case 'terms': return <TermsPage appState={appState} />;
     case 'admin': return <AdminPanel appState={appState} />;
     default: return <Home appState={appState} />;
   }
@@ -1456,6 +2009,34 @@ export default function App() {
   const [cart, setCart] = useState([]);
   const [wishlist, setWishlist] = useState([]);
   const [products, setProducts] = useState(INITIAL_PRODUCTS);
+  const [catalogIsLive, setCatalogIsLive] = useState(false);
+
+  // Everything here is editable from Admin > Site Settings, no redeploy needed.
+  const [settings, setSettings] = useState(DEFAULT_SETTINGS);
+
+  useEffect(() => {
+    const unsub = onSnapshot(
+      doc(db, 'artifacts', appId, 'public', 'data', 'settings', 'site'),
+      (snap) => { if (snap.exists()) setSettings({ ...DEFAULT_SETTINGS, ...snap.data() }); },
+      (err) => console.error("Settings load failed:", err)
+    );
+    return () => unsub();
+  }, []);
+
+  // Products now live in Firestore so stock, sizes and pricing survive refreshes.
+  // Until the collection has anything in it, the placeholder catalog is shown.
+  useEffect(() => {
+    const unsub = onSnapshot(
+      collection(db, 'artifacts', appId, 'public', 'data', 'products'),
+      (snap) => {
+        if (snap.empty) { setCatalogIsLive(false); setProducts(INITIAL_PRODUCTS); return; }
+        setCatalogIsLive(true);
+        setProducts(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+      },
+      (err) => console.error("Catalog load failed:", err)
+    );
+    return () => unsub();
+  }, []);
   const [categories, setCategories] = useState(['Outerwear', 'Tops', 'Bottoms', 'Hardware']);
   const [isCartOpen, setIsCartOpen] = useState(false);
   const [showSizeAI, setShowSizeAI] = useState(false);
@@ -1466,8 +2047,8 @@ export default function App() {
   const [user, setUser] = useState(null);
   const [isFlashing, setIsFlashing] = useState(false);
 
-  const isLight = view !== 'home' && view !== 'admin' && view !== 'profile-setup';
-  
+  const isLight = false;
+
   const theme = {
     bg: isLight ? 'bg-white' : 'bg-[#050505]',
     text: isLight ? 'text-black' : 'text-white',
@@ -1481,7 +2062,8 @@ export default function App() {
   };
 
   const cartTotal = cart.reduce((sum, item) => sum + item.price, 0);
-  const freeShippingThreshold = 5000;
+  const freeShippingThreshold = settings.freeShippingThreshold ?? 5000;
+  const shippingFee = settings.shippingFee ?? 150;
   const progressToFreeShipping = Math.min((cartTotal / freeShippingThreshold) * 100, 100);
 
   useEffect(() => {
@@ -1518,16 +2100,19 @@ export default function App() {
   }, [products]);
 
   useEffect(() => {
-    const initAuth = async () => {
-      try { 
-        await signInAnonymously(auth); 
-      } catch (e) { 
-        console.error("Auth init:", e); 
-      }
-    };
-    initAuth();
-
+    // Only create a guest session when nobody is signed in.
+    // Calling signInAnonymously unconditionally REPLACES an existing email/phone
+    // session with a brand new anonymous one - that logs real users out on refresh.
     const unsubscribe = onAuthStateChanged(auth, async (u) => {
+      if (!u) {
+        setUser(null);
+        try {
+          await signInAnonymously(auth);
+        } catch (e) {
+          console.error("Guest session failed:", e);
+        }
+        return; // this listener re-fires with the new guest user
+      }
       setUser(u);
       if (u) {
         try {
@@ -1598,11 +2183,11 @@ export default function App() {
 
   const appState = {
     view, setView, cart, setCart, wishlist, setWishlist, products, setProducts,
-    categories, setCategories,
+    categories, setCategories, catalogIsLive, settings,
     isCartOpen, setIsCartOpen, showSizeAI, setShowSizeAI, showVibeMatcher, setShowVibeMatcher,
     selectedProduct, setSelectedProduct, isMobileMenuOpen, setIsMobileMenuOpen,
     shopCategory, setShopCategory, user, setUser, isFlashing, setIsFlashing,
-    isLight, theme, cartTotal, freeShippingThreshold, progressToFreeShipping,
+    isLight, theme, cartTotal, freeShippingThreshold, shippingFee, progressToFreeShipping,
     handleNavigate, openProduct, enterVault, toggleWishlist, addToCart, removeFromCart, saveUserData
   };
 
@@ -1611,7 +2196,8 @@ export default function App() {
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap');
         @import url('https://fonts.googleapis.com/css2?family=Oswald:wght@500;700&display=swap');
-        body { font-family: 'JetBrains Mono', monospace; } .font-mono { font-family: 'JetBrains Mono', monospace; } .font-display { font-family: 'Oswald', sans-serif; letter-spacing: -0.02em; }
+        @import url('https://fonts.googleapis.com/css2?family=Anton&display=swap');
+        body { font-family: 'JetBrains Mono', monospace; } .font-mono { font-family: 'JetBrains Mono', monospace; } .font-display { font-family: 'Anton', sans-serif; letter-spacing: -0.01em; }
         html { scroll-behavior: smooth; }
         @keyframes pan-bg { 0% { transform: scale(1) translate(0px, 0px); } 50% { transform: scale(1.05) translate(-10px, -10px); } 100% { transform: scale(1) translate(0px, 0px); } } .animate-pan-bg { animation: pan-bg 20s ease-in-out infinite; }
         @keyframes reveal { 0% { opacity: 0; transform: translateY(30px); filter: blur(5px); } 100% { opacity: 1; transform: translateY(0); filter: blur(0); } }
@@ -1633,7 +2219,7 @@ export default function App() {
         @keyframes marquee { 0% { transform: translateX(0%); } 100% { transform: translateX(-25%); } } .animate-marquee { animation: marquee 12s linear infinite; width: fit-content; }
         .glitch-hover { position: relative; } .glitch-hover:hover::before, .glitch-hover:hover::after { content: attr(data-text); position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: transparent; } .glitch-hover:hover::before { left: 2px; text-shadow: -1px 0 #A6FF3D; animation: glitch-anim-1 2s infinite linear alternate-reverse; } .glitch-hover:hover::after { left: -2px; text-shadow: -1px 0 #C7CDD1; animation: glitch-anim-2 3s infinite linear alternate-reverse; }
         @keyframes glitch-anim-1 { 0% { clip-path: inset(20% 0 80% 0); } 20% { clip-path: inset(60% 0 10% 0); } 40% { clip-path: inset(40% 0 50% 0); } 60% { clip-path: inset(80% 0 5% 0); } 80% { clip-path: inset(10% 0 70% 0); } 100% { clip-path: inset(30% 0 20% 0); } } @keyframes glitch-anim-2 { 0% { clip-path: inset(10% 0 60% 0); } 20% { clip-path: inset(80% 0 5% 0); } 40% { clip-path: inset(30% 0 20% 0); } 60% { clip-path: inset(70% 0 10% 0); } 80% { clip-path: inset(20% 0 50% 0); } 100% { clip-path: inset(50% 0 30% 0); } }
-        ::-webkit-scrollbar { width: 8px; } ::-webkit-scrollbar-track { background: ${isLight ? '#f3f4f6' : '#050505'}; } ::-webkit-scrollbar-thumb { background: ${isLight ? '#d1d5db' : '#222'}; } ::-webkit-scrollbar-thumb:hover { background: #C7CDD1; }
+        ::-webkit-scrollbar { width: 8px; } ::-webkit-scrollbar-track { background: #050505; } ::-webkit-scrollbar-thumb { background: #222; } ::-webkit-scrollbar-thumb:hover { background: #C7CDD1; }
         .scrollbar-hide::-webkit-scrollbar { display: none; } .scrollbar-hide { -ms-overflow-style: none; scrollbar-width: none; }
       `}</style>
 
@@ -1654,7 +2240,7 @@ export default function App() {
         <div className="fixed inset-0 z-[60] flex justify-end">
           <div className="absolute inset-0 bg-black/80 backdrop-blur-sm cursor-pointer" onClick={() => setIsCartOpen(false)}></div>
           <div className={`w-full max-w-md ${isLight ? 'bg-white' : 'bg-[#050505]'} h-full border-l ${theme.border} flex flex-col relative z-10 transform transition-transform duration-300`}>
-            <div className={`p-6 border-b ${theme.border} flex justify-between items-center`}><h2 className={`text-2xl font-black uppercase tracking-tighter ${theme.text}`} style={{ fontFamily: "'Impact', sans-serif" }}>Cart ({cart.length})</h2><button onClick={() => setIsCartOpen(false)} className={`${theme.textMuted} hover:${theme.text}`}><X size={24} /></button></div>
+            <div className={`p-6 border-b ${theme.border} flex justify-between items-center`}><h2 className={`text-2xl font-black uppercase tracking-tighter ${theme.text}`} style={{ fontFamily: "'Anton', sans-serif" }}>Cart ({cart.length})</h2><button onClick={() => setIsCartOpen(false)} className={`${theme.textMuted} hover:${theme.text}`}><X size={24} /></button></div>
             <div className={`p-4 ${theme.card} border-b ${theme.border}`}><p className={`text-xs font-mono mb-2 ${theme.textMuted}`}>{progressToFreeShipping >= 100 ? "UNLOCKED: FREE PAN-INDIA SHIPPING" : `ADD ₹${freeShippingThreshold - cartTotal} MORE FOR FREE DELIVERY`}</p><div className={`w-full h-1 ${isLight ? 'bg-gray-300' : 'bg-gray-800'} rounded-full overflow-hidden`}><div className="h-full bg-[#C7CDD1] transition-all duration-500" style={{ width: `${progressToFreeShipping}%` }}></div></div></div>
             <div className="flex-1 overflow-y-auto p-6 space-y-6">
               {cart.map((item, index) => (
